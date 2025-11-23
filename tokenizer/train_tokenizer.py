@@ -8,6 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tokenizers import Tokenizer, models, trainers, pre_tokenizers, decoders, processors
 from transformers import PreTrainedTokenizerFast
 from utils.logger import Logger
+import argparse
 
 
 def batch_iterator(files, logger=None):
@@ -108,7 +109,10 @@ def train_tokenizer(files, vocab_size=32000, save_path="mini_tokenizer"):
 
 if __name__ == "__main__":
     # Example usage with the actual data file
-    data_file = "data/pretrain_hq.jsonl"
+    parser = argparse.ArgumentParser(description="Tokenizer Training Script")
+    parser.add_argument("--data_path", type=str, default="data/pretrain_hq.jsonl")
+    args = parser.parse_args()
+    data_file = args.data_path
 
     # Check if the data file exists, otherwise create a dummy one for testing
     if not os.path.exists(data_file):
