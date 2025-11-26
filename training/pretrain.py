@@ -13,23 +13,38 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.logger import Logger
 
 
-class TextDataset(Dataset):
+import json
+from torch.utils.data import IterableDataset
+
+
+class TextDataset(IterableDataset):
     def __init__(self, file_path, tokenizer, block_size=128):
-        self.examples = []
-        with open(file_path, "r", encoding="utf-8") as f:
-            text = f.read()
+        self.file_path = file_path
+        self.tokenizer = tokenizer
+        self.block_size = block_size
 
-        tokenized_text = tokenizer.encode(text)
+    def __iter__(self):
+        buffer = []
+        with open(self.file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                text = line.strip()
+                if not text:
+                    continue
 
-        # Simple sliding window for demonstration
-        for i in range(0, len(tokenized_text) - block_size, block_size):
-            self.examples.append(tokenized_text[i : i + block_size])
+                # Try to parse as JSONL
+                try:
+                    data = json.loads(text)
+                    if isinstance(data, dict) and "text" in data:
+                        text = data["text"]
+                except json.JSONDecodeError:
+                    pass  # Treat as plain text line
 
-    def __len__(self):
-        return len(self.examples)
+                tokenized_text = self.tokenizer.encode(text)
+                buffer.extend(tokenized_text)
 
-    def __getitem__(self, i):
-        return torch.tensor(self.examples[i], dtype=torch.long)
+                while len(buffer) >= self.block_size:
+                    yield torch.tensor(buffer[: self.block_size], dtype=torch.long)
+                    buffer = buffer[self.block_size :]
 
 
 def train(
