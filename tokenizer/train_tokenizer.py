@@ -11,36 +11,99 @@ from utils.logger import Logger
 import argparse
 
 
-def batch_iterator(files, logger=None):
+# def batch_iterator(files, logger=None):
+#     """
+#     Yields text data from files (supports .txt and .jsonl).
+#     """
+#     for file_path in files:
+#         if not os.path.exists(file_path):
+#             if logger:
+#                 logger.warning(f"File {file_path} not found.")
+#             else:
+#                 print(f"Warning: File {file_path} not found.")
+#             continue
+
+
+#         with open(file_path, "r", encoding="utf-8") as f:
+#             if file_path.endswith(".jsonl"):
+#                 for line in f:
+#                     if not line.strip():
+#                         continue
+#                     try:
+#                         data = json.loads(line)
+#                         if "text" in data:
+#                             yield data["text"]
+#                     except json.JSONDecodeError:
+#                         if logger:
+#                             logger.warning(f"Failed to decode JSON line in {file_path}")
+#                         else:
+#                             print(f"Warning: Failed to decode JSON line in {file_path}")
+#             else:
+#                 # Assume plain text
+#                 for line in f:
+#                     yield line
+def batch_iterator(
+    files, logger=None, max_bytes=1 * 1024 * 1024 * 1024
+):  # 默认限制 1GB
     """
     Yields text data from files (supports .txt and .jsonl).
+    Stops after processing max_bytes of data.
     """
+    current_bytes = 0
+
+    if logger:
+        logger.info(f"Data limit set to: {max_bytes / (1024*1024):.2f} MB")
+    else:
+        print(f"Data limit set to: {max_bytes / (1024*1024):.2f} MB")
+
     for file_path in files:
+        # 如果已经达到总限制，就不再打开新文件
+        if current_bytes >= max_bytes:
+            break
+
         if not os.path.exists(file_path):
+            msg = f"File {file_path} not found."
             if logger:
-                logger.warning(f"File {file_path} not found.")
+                logger.warning(msg)
             else:
-                print(f"Warning: File {file_path} not found.")
+                print(f"Warning: {msg}")
             continue
 
         with open(file_path, "r", encoding="utf-8") as f:
             if file_path.endswith(".jsonl"):
                 for line in f:
+                    # 检查是否超限
+                    if current_bytes >= max_bytes:
+                        break
+
                     if not line.strip():
                         continue
                     try:
                         data = json.loads(line)
                         if "text" in data:
-                            yield data["text"]
+                            text = data["text"]
+                            text_len = len(text.encode("utf-8"))  # 计算字节大小
+
+                            yield text
+                            current_bytes += text_len
                     except json.JSONDecodeError:
                         if logger:
                             logger.warning(f"Failed to decode JSON line in {file_path}")
-                        else:
-                            print(f"Warning: Failed to decode JSON line in {file_path}")
             else:
                 # Assume plain text
                 for line in f:
+                    if current_bytes >= max_bytes:
+                        break
+
+                    line_len = len(line.encode("utf-8"))
                     yield line
+                    current_bytes += line_len
+
+    msg = f"Tokenizer training completed. Processed {current_bytes / (1024*1024):.2f} MB of data."
+    if logger:
+        logger.info(msg)
+    else:
+        print(msg)
 
 
 def get_chat_template():
@@ -106,7 +169,12 @@ def get_chat_template():
     return template
 
 
-def train_tokenizer(files, vocab_size=32000, save_path="lulu_tokenizer"):
+def train_tokenizer(
+    files,
+    vocab_size=32000,
+    save_path="lulu_tokenizer",
+    max_train_bytes=1024 * 1024 * 1024,
+):
     """
     Trains a BPE tokenizer from scratch with Tool Call, Think, and Image support.
     """
@@ -150,7 +218,9 @@ def train_tokenizer(files, vocab_size=32000, save_path="lulu_tokenizer"):
 
     # Train
     logger.info(f"Training tokenizer on {files}...")
-    tokenizer.train_from_iterator(batch_iterator(files, logger), trainer=trainer)
+    tokenizer.train_from_iterator(
+        batch_iterator(files, logger, max_bytes=max_train_bytes), trainer=trainer
+    )
 
     # Simple assertion check
     assert tokenizer.token_to_id("<|endoftext|>") == 0
@@ -206,7 +276,8 @@ if __name__ == "__main__":
         files_to_train = [data_file]
 
     # Train
-    tokenizer = train_tokenizer(files_to_train, vocab_size=6400)
+    ONE_GB = 1 * 1024 * 1024 * 1024
+    tokenizer = train_tokenizer(files_to_train, vocab_size=6400, max_train_bytes=ONE_GB)
 
     # ==========================================
     # Test Chat Template
