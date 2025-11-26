@@ -63,7 +63,7 @@ def train(
     model.train()
 
     dataset = TextDataset(train_file, tokenizer)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=batch_size)
 
     optimizer = AdamW(model.parameters(), lr=lr)
 
