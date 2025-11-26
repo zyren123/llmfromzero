@@ -262,6 +262,7 @@ if __name__ == "__main__":
     # Example usage
     parser = argparse.ArgumentParser(description="Tokenizer Training Script")
     parser.add_argument("--data_path", type=str, default="data/pretrain_hq.jsonl")
+    parser.add_argument("--data_num", type=float, default=1)
     args = parser.parse_args()
     data_file = args.data_path
 
@@ -276,7 +277,7 @@ if __name__ == "__main__":
         files_to_train = [data_file]
 
     # Train
-    ONE_GB = 1 * 1024 * 1024 * 1024
+    ONE_GB = args.data_num * 1024 * 1024 * 1024
     tokenizer = train_tokenizer(files_to_train, vocab_size=6400, max_train_bytes=ONE_GB)
 
     # ==========================================
