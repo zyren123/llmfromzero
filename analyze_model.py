@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
-from models.dense import DenseConfig, DenseModel
-from models.moe import DeepSeekV3Config, DeepSeekV3Model, DeepSeekMoE
-from models.vlm import VLMConfig, VLMModel, VisionConfig
+from models.dense import LuluConfig, LuluModel
+from models.moe import LuluMoeConfig, LuluMoeModel, LuluMoE
+from models.vlm import LuluVLConfig, LuluVLModel, VisionConfig
 
 
 def count_parameters(model):
@@ -25,9 +25,9 @@ def analyze_dense(config=None):
     print("Analyzing Dense Model (Qwen2.5 Style)")
     print("=" * 50)
     if config is None:
-        config = DenseConfig()  # Use defaults (50M target)
+        config = LuluConfig()  # Use defaults (50M target)
 
-    model = DenseModel(config)
+    model = LuluModel(config)
     total_params = count_parameters(model)
 
     print(
@@ -41,9 +41,9 @@ def analyze_vlm(config=None):
     print("Analyzing VLM (Vision + Projector + LLM)")
     print("=" * 50)
     if config is None:
-        config = VLMConfig(VisionConfig(), DenseConfig())  # Use defaults (50M target)
+        config = LuluVLConfig(VisionConfig(), LuluConfig())  # Use defaults (50M target)
 
-    model = VLMModel(config)
+    model = LuluVLModel(config)
 
     total_params = count_parameters(model)
     vision_params = count_parameters(model.vision_tower)
@@ -68,16 +68,16 @@ def analyze_moe(config=None):
     print("Analyzing MoE Model (DeepSeek-V3 Style)")
     print("=" * 50)
     if config is None:
-        config = DeepSeekV3Config()  # Use defaults (50M target)
+        config = LuluMoeConfig()  # Use defaults (50M target)
 
-    model = DeepSeekV3Model(config)
+    model = LuluMoeModel(config)
     total_params = count_parameters(model)
 
     total_routed_params = 0
     single_expert_params = 0
 
     for name, module in model.named_modules():
-        if isinstance(module, DeepSeekMoE):
+        if isinstance(module, LuluMoE):
             if len(module.routed_experts) > 0:
                 one_expert = module.routed_experts[0]
                 p_expert = count_parameters(one_expert)
