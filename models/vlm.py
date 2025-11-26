@@ -1,8 +1,12 @@
 import torch
 import torch.nn as nn
-from transformers import PreTrainedModel, PretrainedConfig, GenerationMixin
+from transformers import (
+    PreTrainedModel,
+    PretrainedConfig,
+    GenerationMixin,
+)
 from transformers.modeling_outputs import CausalLMOutputWithPast
-from .dense import DenseConfig, DenseModel
+from .dense import LuluConfig, LuluModel
 
 
 class VisionConfig(PretrainedConfig):
@@ -31,8 +35,8 @@ class VisionConfig(PretrainedConfig):
         self.hidden_act = hidden_act
 
 
-class VLMConfig(PretrainedConfig):
-    model_type = "custom_vlm"
+class LuluVLConfig(PretrainedConfig):
+    model_type = "lulu_vl"
 
     def __init__(
         self,
@@ -51,7 +55,7 @@ class VLMConfig(PretrainedConfig):
 
         if text_config is None:
             # Default to a smaller Dense config for VLM to keep total size manageable
-            self.text_config = DenseConfig(
+            self.text_config = LuluConfig(
                 vocab_size=32000,
                 hidden_size=512,
                 intermediate_size=2048,
@@ -60,7 +64,7 @@ class VLMConfig(PretrainedConfig):
                 num_key_value_heads=4,
             )
         elif isinstance(text_config, dict):
-            self.text_config = DenseConfig(**text_config)
+            self.text_config = LuluConfig(**text_config)
         else:
             self.text_config = text_config
 
@@ -104,13 +108,13 @@ class VisionEncoder(nn.Module):
         return x
 
 
-class VLMModel(PreTrainedModel, GenerationMixin):
-    config_class = VLMConfig
+class LuluVLModel(PreTrainedModel, GenerationMixin):
+    config_class = LuluVLConfig
 
-    def __init__(self, config: VLMConfig):
+    def __init__(self, config: LuluVLConfig):
         super().__init__(config)
         self.vision_tower = VisionEncoder(config.vision_config)
-        self.language_model = DenseModel(config.text_config)
+        self.language_model = LuluModel(config.text_config)
 
         self.projector = nn.Sequential(
             nn.Linear(config.vision_config.hidden_size, config.text_config.hidden_size),
@@ -177,3 +181,8 @@ class VLMModel(PreTrainedModel, GenerationMixin):
             loss=loss,
             logits=logits,
         )
+
+
+# Register for AutoModel
+LuluVLConfig.register_for_auto_class()
+LuluVLModel.register_for_auto_class("AutoModelForCausalLM")

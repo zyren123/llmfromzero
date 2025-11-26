@@ -3,25 +3,31 @@ import torch
 import os
 import sys
 from transformers import PreTrainedTokenizerFast
+from accelerate import Accelerator
+import wandb
 
 # Add current directory to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from models.dense import DenseModel, DenseConfig
-from models.moe import DeepSeekV3Model, DeepSeekV3Config
+from models.dense import LuluModel, LuluConfig
+from models.moe import LuluMoeModel, LuluMoeConfig
+from models.vlm import LuluVLModel, LuluVLConfig
 from training.pretrain import train as train_pretrain
 from training.sft import train_sft
 from training.dpo import train_dpo
 from utils.logger import Logger
 
 
-def get_model(model_type, vocab_size, device):
-    if model_type == "dense":
-        config = DenseConfig(vocab_size=vocab_size)
-        model = DenseModel(config)
-    elif model_type == "moe":
-        config = DeepSeekV3Config(vocab_size=vocab_size)
-        model = DeepSeekV3Model(config)
+def get_model(model_type, vocab_size):
+    if model_type == "lulu":
+        config = LuluConfig(vocab_size=vocab_size)
+        model = LuluModel(config)
+    elif model_type == "lulu_moe":
+        config = LuluMoeConfig(vocab_size=vocab_size)
+        model = LuluMoeModel(config)
+    elif model_type == "lulu_vl":
+        config = LuluVLConfig(vocab_size=vocab_size)
+        model = LuluVLModel(config)
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -40,8 +46,8 @@ def main():
     parser.add_argument(
         "--model_type",
         type=str,
-        default="dense",
-        choices=["dense", "moe"],
+        default="lulu",
+        choices=["lulu", "lulu_moe", "lulu_vl"],
         help="Model architecture",
     )
     parser.add_argument(
@@ -63,16 +69,22 @@ def main():
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument(
-        "--device",
+        "--wandb_project",
         type=str,
-        default="cuda" if torch.cuda.is_available() else "cpu",
-        help="Device to train on",
+        default="lulu-training",
+        help="WandB project name",
     )
 
     args = parser.parse_args()
 
     logger = Logger("train")
+
+    # Initialize Accelerator
+    accelerator = Accelerator(log_with="wandb")
+    accelerator.init_trackers(project_name=args.wandb_project, config=vars(args))
+
     logger.info(f"Starting training with args: {args}")
+    logger.info(f"Accelerator device: {accelerator.device}")
 
     # Load Tokenizer
     if not os.path.exists(args.tokenizer_path):
@@ -84,7 +96,7 @@ def main():
     )
 
     # Initialize Model
-    model = get_model(args.model_type, len(tokenizer), args.device)
+    model = get_model(args.model_type, len(tokenizer))
     logger.info(f"Initialized {args.model_type} model")
 
     # Create output directory
@@ -100,7 +112,7 @@ def main():
             epochs=args.epochs,
             batch_size=args.batch_size,
             lr=args.lr,
-            device=args.device,
+            accelerator=accelerator,
         )
     elif args.mode == "sft":
         trained_model = train_sft(
@@ -110,7 +122,7 @@ def main():
             epochs=args.epochs,
             batch_size=args.batch_size,
             lr=args.lr,
-            device=args.device,
+            accelerator=accelerator,
         )
     elif args.mode == "dpo":
         trained_model = train_dpo(
@@ -120,13 +132,18 @@ def main():
             epochs=args.epochs,
             batch_size=args.batch_size,
             lr=args.lr,
-            device=args.device,
+            accelerator=accelerator,
         )
 
     # Save Model
-    save_path = os.path.join(args.output_dir, f"{args.model_type}_{args.mode}_final.pt")
-    torch.save(trained_model.state_dict(), save_path)
-    logger.info(f"Model saved to {save_path}")
+    # Save Model
+    accelerator.wait_for_everyone()
+    unwrapped_model = accelerator.unwrap_model(trained_model)
+    unwrapped_model.save_pretrained(args.output_dir)
+    tokenizer.save_pretrained(args.output_dir)
+    logger.info(f"Model and tokenizer saved to {args.output_dir}")
+
+    accelerator.end_training()
 
 
 if __name__ == "__main__":

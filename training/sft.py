@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.optim import AdamW
 from transformers import PreTrainedTokenizerFast
+from accelerate import Accelerator
 import json
 from tqdm import tqdm
 import os
@@ -63,11 +64,11 @@ def train_sft(
     epochs=1,
     batch_size=2,
     lr=5e-5,
-    device="cuda" if torch.cuda.is_available() else "cpu",
+    accelerator=None,
 ):
     logger = Logger("sft")
-    logger.info(f"Starting SFT on {device}...")
-    model.to(device)
+    logger.info(f"Starting SFT on {accelerator.device}...")
+    # model.to(device) # Handled by accelerate
     model.train()
 
     dataset = SFTDataset(train_file, tokenizer)
@@ -75,23 +76,30 @@ def train_sft(
 
     optimizer = AdamW(model.parameters(), lr=lr)
 
+    model, optimizer, dataloader = accelerator.prepare(model, optimizer, dataloader)
+
     for epoch in range(epochs):
         loop = tqdm(dataloader, desc=f"SFT Epoch {epoch + 1}/{epochs}")
         for i, batch in enumerate(loop):
-            input_ids = batch["input_ids"].to(device)
-            labels = batch["labels"].to(device)
+            # input_ids = batch["input_ids"].to(device) # Handled by accelerate
+            # labels = batch["labels"].to(device)
+            input_ids = batch["input_ids"]
+            labels = batch["labels"]
 
             outputs = model(input_ids=input_ids, labels=labels)
             loss = outputs["loss"]
 
             optimizer.zero_grad()
-            loss.backward()
+            accelerator.backward(loss)
             optimizer.step()
 
             loop.set_postfix(loss=loss.item())
 
             # Log metrics every 10 steps
             if i % 10 == 0:
+                accelerator.log(
+                    {"sft_loss": loss.item(), "epoch": epoch + 1, "step": i}
+                )
                 logger.log_metrics(
                     {"epoch": epoch + 1, "step": i, "loss": f"{loss.item():.4f}"}
                 )

@@ -1,13 +1,13 @@
 import os
 import shutil
 from transformers import AutoConfig, AutoModelForCausalLM
-from models.dense import DenseConfig, DenseModel
+from models.dense import LuluConfig, LuluModel
 
 # 1. Register the custom classes
 # This tells AutoConfig that "dense_qwen" model_type corresponds to DenseConfig
-AutoConfig.register("dense_qwen", DenseConfig)
+AutoConfig.register("lulu", LuluConfig)
 # This tells AutoModel that when it sees DenseConfig, it should use DenseModel
-AutoModelForCausalLM.register(DenseConfig, DenseModel)
+AutoModelForCausalLM.register(LuluConfig, LuluModel)
 
 
 def test_save_and_load():
@@ -18,7 +18,7 @@ def test_save_and_load():
         shutil.rmtree(save_directory)
 
     print("1. Initializing a small random model...")
-    config = DenseConfig(
+    config = LuluConfig(
         vocab_size=1000,
         hidden_size=64,
         intermediate_size=128,
@@ -26,7 +26,7 @@ def test_save_and_load():
         num_attention_heads=4,
         num_key_value_heads=2,
     )
-    model = DenseModel(config)
+    model = LuluModel(config)
 
     print(f"2. Saving model to {save_directory}...")
     model.save_pretrained(save_directory, safe_serialization=False)
@@ -39,8 +39,8 @@ def test_save_and_load():
         print(f"   Loaded model class: {type(loaded_model)}")
 
         # Verify it's indeed our class
-        assert isinstance(loaded_model, DenseModel)
-        print("   Verification passed: Loaded model is instance of DenseModel.")
+        assert isinstance(loaded_model, LuluModel)
+        print("   Verification passed: Loaded model is instance of LuluModel.")
 
     except Exception as e:
         print(f"   Failed to load: {e}")

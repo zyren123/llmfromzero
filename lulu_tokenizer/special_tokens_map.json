@@ -1,0 +1,19 @@
+{
+  "additional_special_tokens": [
+    "<|im_start|>",
+    "<|im_end|>",
+    "<think>",
+    "</think>",
+    "<|image_pad|>",
+    "<tool_call>",
+    "</tool_call>",
+    "<tool_response>",
+    "</tool_response>",
+    "<tools>",
+    "</tools>"
+  ],
+  "bos_token": "<|endoftext|>",
+  "eos_token": "<|endoftext|>",
+  "pad_token": "<|endoftext|>",
+  "unk_token": "<|endoftext|>"
+}

@@ -1,13 +1,17 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import PreTrainedModel, PretrainedConfig, GenerationMixin
+from transformers import (
+    PreTrainedModel,
+    PretrainedConfig,
+    GenerationMixin,
+)
 from transformers.modeling_outputs import CausalLMOutputWithPast
 import math
 
 
-class DeepSeekV3Config(PretrainedConfig):
-    model_type = "deepseek_v3"
+class LuluMoeConfig(PretrainedConfig):
+    model_type = "lulu_moe"
 
     def __init__(
         self,
@@ -107,7 +111,7 @@ def apply_rotary_pos_emb(q, k, cos, sin):
 
 
 class MoEAttention(nn.Module):
-    def __init__(self, config: DeepSeekV3Config):
+    def __init__(self, config: LuluMoeConfig):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
@@ -173,8 +177,8 @@ class MoEAttention(nn.Module):
         return self.o_proj(attn_output)
 
 
-class DeepSeekMoE(nn.Module):
-    def __init__(self, config: DeepSeekV3Config):
+class LuluMoE(nn.Module):
+    def __init__(self, config: LuluMoeConfig):
         super().__init__()
         self.num_experts = config.moe_num_experts
         self.num_shared_experts = config.moe_num_shared_experts
@@ -237,11 +241,11 @@ class DeepSeekMoE(nn.Module):
         return total_output.view(bsz, seq_len, hidden_dim)
 
 
-class DeepSeekBlock(nn.Module):
-    def __init__(self, config: DeepSeekV3Config):
+class LuluMoeBlock(nn.Module):
+    def __init__(self, config: LuluMoeConfig):
         super().__init__()
         self.self_attn = MoEAttention(config)
-        self.moe = DeepSeekMoE(config)
+        self.moe = LuluMoE(config)
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
@@ -260,14 +264,14 @@ class DeepSeekBlock(nn.Module):
         return hidden_states
 
 
-class DeepSeekV3Model(PreTrainedModel, GenerationMixin):
-    config_class = DeepSeekV3Config
+class LuluMoeModel(PreTrainedModel, GenerationMixin):
+    config_class = LuluMoeConfig
 
-    def __init__(self, config: DeepSeekV3Config):
+    def __init__(self, config: LuluMoeConfig):
         super().__init__(config)
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.layers = nn.ModuleList(
-            [DeepSeekBlock(config) for _ in range(config.num_hidden_layers)]
+            [LuluMoeBlock(config) for _ in range(config.num_hidden_layers)]
         )
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
@@ -303,3 +307,8 @@ class DeepSeekV3Model(PreTrainedModel, GenerationMixin):
             loss=loss,
             logits=logits,
         )
+
+
+# Register for AutoModel
+LuluMoeConfig.register_for_auto_class()
+LuluMoeModel.register_for_auto_class("AutoModelForCausalLM")

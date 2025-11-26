@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torch.optim import AdamW
+from accelerate import Accelerator
 import copy
 import json
 from tqdm import tqdm
@@ -99,11 +100,11 @@ def train_dpo(
     epochs=1,
     batch_size=2,
     lr=1e-5,
-    device="cuda" if torch.cuda.is_available() else "cpu",
+    accelerator=None,
 ):
     logger = Logger("dpo")
-    logger.info(f"Starting DPO on {device}...")
-    model.to(device)
+    logger.info(f"Starting DPO on {accelerator.device}...")
+    # model.to(device) # Handled by accelerate
     model.train()
 
     if ref_model is None:
@@ -112,7 +113,7 @@ def train_dpo(
         )
         ref_model = copy.deepcopy(model)
 
-    ref_model.to(device)
+    # ref_model.to(device) # Handled by accelerate
     ref_model.eval()
 
     dataset = DPODataset(train_file, tokenizer)
@@ -120,13 +121,29 @@ def train_dpo(
 
     optimizer = AdamW(model.parameters(), lr=lr)
 
+    # Prepare model, optimizer, dataloader with accelerator
+    # Note: ref_model should also be prepared if it has parameters, but usually it's frozen.
+    # However, for distributed, it needs to be on the right device.
+    # Since we deepcopied it from model (which is not yet prepared), we should prepare it too or manually move it.
+    # But deepcopying a model that is about to be prepared might be tricky.
+    # Let's assume ref_model is just moved to device by accelerate if we prepare it.
+
+    model, optimizer, dataloader, ref_model = accelerator.prepare(
+        model, optimizer, dataloader, ref_model
+    )
+
     for epoch in range(epochs):
         loop = tqdm(dataloader, desc=f"DPO Epoch {epoch + 1}/{epochs}")
         for i, batch in enumerate(loop):
-            chosen_input_ids = batch["chosen_input_ids"].to(device)
-            chosen_labels = batch["chosen_labels"].to(device)
-            rejected_input_ids = batch["rejected_input_ids"].to(device)
-            rejected_labels = batch["rejected_labels"].to(device)
+            # chosen_input_ids = batch["chosen_input_ids"].to(device) # Handled by accelerate
+            # chosen_labels = batch["chosen_labels"].to(device)
+            # rejected_input_ids = batch["rejected_input_ids"].to(device)
+            # rejected_labels = batch["rejected_labels"].to(device)
+
+            chosen_input_ids = batch["chosen_input_ids"]
+            chosen_labels = batch["chosen_labels"]
+            rejected_input_ids = batch["rejected_input_ids"]
+            rejected_labels = batch["rejected_labels"]
 
             # Concatenate chosen and rejected for efficient forward pass
             all_input_ids = torch.cat([chosen_input_ids, rejected_input_ids], dim=0)
@@ -154,13 +171,17 @@ def train_dpo(
             loss = losses.mean()
 
             optimizer.zero_grad()
-            loss.backward()
+            optimizer.zero_grad()
+            accelerator.backward(loss)
             optimizer.step()
 
             loop.set_postfix(loss=loss.item())
 
             # Log metrics every 10 steps
             if i % 10 == 0:
+                accelerator.log(
+                    {"dpo_loss": loss.item(), "epoch": epoch + 1, "step": i}
+                )
                 logger.log_metrics(
                     {"epoch": epoch + 1, "step": i, "loss": f"{loss.item():.4f}"}
                 )

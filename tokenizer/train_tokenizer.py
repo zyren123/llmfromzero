@@ -262,7 +262,7 @@ if __name__ == "__main__":
     # Example usage
     parser = argparse.ArgumentParser(description="Tokenizer Training Script")
     parser.add_argument("--data_path", type=str, default="data/pretrain_hq.jsonl")
-    parser.add_argument("--data_num", type=float, default=1)
+    parser.add_argument("--data_num", type=float, default=0.6)
     args = parser.parse_args()
     data_file = args.data_path
 
