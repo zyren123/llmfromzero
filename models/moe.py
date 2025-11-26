@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import PreTrainedModel, PretrainedConfig
+from transformers import PreTrainedModel, PretrainedConfig, GenerationMixin
+from transformers.modeling_outputs import CausalLMOutputWithPast
 import math
 
 
@@ -259,7 +260,7 @@ class DeepSeekBlock(nn.Module):
         return hidden_states
 
 
-class DeepSeekV3Model(PreTrainedModel):
+class DeepSeekV3Model(PreTrainedModel, GenerationMixin):
     config_class = DeepSeekV3Config
 
     def __init__(self, config: DeepSeekV3Config):
@@ -298,4 +299,7 @@ class DeepSeekV3Model(PreTrainedModel):
                 shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1)
             )
 
-        return {"loss": loss, "logits": logits}
+        return CausalLMOutputWithPast(
+            loss=loss,
+            logits=logits,
+        )

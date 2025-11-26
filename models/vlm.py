@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from transformers import PreTrainedModel, PretrainedConfig
+from transformers import PreTrainedModel, PretrainedConfig, GenerationMixin
+from transformers.modeling_outputs import CausalLMOutputWithPast
 from .dense import DenseConfig, DenseModel
 
 
@@ -103,7 +104,7 @@ class VisionEncoder(nn.Module):
         return x
 
 
-class VLMModel(PreTrainedModel):
+class VLMModel(PreTrainedModel, GenerationMixin):
     config_class = VLMConfig
 
     def __init__(self, config: VLMConfig):
@@ -172,4 +173,7 @@ class VLMModel(PreTrainedModel):
                 shift_labels.view(-1),
             )
 
-        return {"loss": loss, "logits": logits}
+        return CausalLMOutputWithPast(
+            loss=loss,
+            logits=logits,
+        )
