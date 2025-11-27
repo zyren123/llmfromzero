@@ -113,6 +113,7 @@ def main():
             batch_size=args.batch_size,
             lr=args.lr,
             accelerator=accelerator,
+            output_dir=args.output_dir,
         )
     elif args.mode == "sft":
         trained_model = train_sft(
