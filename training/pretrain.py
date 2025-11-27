@@ -1,8 +1,7 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.optim import AdamW
-from transformers import PreTrainedTokenizerFast, get_cosine_schedule_with_warmup
-from accelerate import Accelerator
+from transformers import get_cosine_schedule_with_warmup
 import os
 import sys
 from tqdm import tqdm
@@ -14,18 +13,51 @@ from utils.logger import Logger
 
 
 import json
-from torch.utils.data import IterableDataset
+# from torch.utils.data import IterableDataset
 
 
-class TextDataset(IterableDataset):
-    def __init__(self, file_path, tokenizer, block_size=128):
-        self.file_path = file_path
+# IterableDataset version (commented out due to distributed training issues)
+# class TextDataset(IterableDataset):
+#     def __init__(self, file_path, tokenizer, block_size=128):
+#         self.file_path = file_path
+#         self.tokenizer = tokenizer
+#         self.block_size = block_size
+#
+#     def __iter__(self):
+#         buffer = []
+#         with open(self.file_path, "r", encoding="utf-8") as f:
+#             for line in f:
+#                 text = line.strip()
+#                 if not text:
+#                     continue
+#
+#                 # Try to parse as JSONL
+#                 try:
+#                     data = json.loads(text)
+#                     if isinstance(data, dict) and "text" in data:
+#                         text = data["text"]
+#                 except json.JSONDecodeError:
+#                     pass  # Treat as plain text line
+#
+#                 tokenized_text = self.tokenizer.encode(text)
+#                 buffer.extend(tokenized_text)
+#
+#                 while len(buffer) >= self.block_size:
+#                     yield torch.tensor(buffer[: self.block_size], dtype=torch.long)
+#                     buffer = buffer[self.block_size :]
+
+
+# Regular Dataset version (works better with distributed training)
+class TextDataset(Dataset):
+    def __init__(self, file_path, tokenizer):
         self.tokenizer = tokenizer
-        self.block_size = block_size
+        self.examples = []
+        logger = Logger("pretrain")
 
-    def __iter__(self):
-        buffer = []
-        with open(self.file_path, "r", encoding="utf-8") as f:
+        # Load and preprocess all data
+        logger.info(f"Loading dataset from {file_path}...")
+
+        with open(file_path, "r", encoding="utf-8") as f:
             for line in f:
                 text = line.strip()
                 if not text:
@@ -33,18 +65,24 @@ class TextDataset(IterableDataset):
 
                 # Try to parse as JSONL
                 try:
-                    data = json.loads(text)
+                    data = json.loads(line)
                     if isinstance(data, dict) and "text" in data:
                         text = data["text"]
                 except json.JSONDecodeError:
                     pass  # Treat as plain text line
 
+                # Tokenize the entire text
                 tokenized_text = self.tokenizer.encode(text)
-                buffer.extend(tokenized_text)
+                if len(tokenized_text) > 0:  # Only add non-empty sequences
+                    self.examples.append(torch.tensor(tokenized_text, dtype=torch.long))
 
-                while len(buffer) >= self.block_size:
-                    yield torch.tensor(buffer[: self.block_size], dtype=torch.long)
-                    buffer = buffer[self.block_size :]
+        logger.info(f"Loaded {len(self.examples)} examples from dataset")
+
+    def __len__(self):
+        return len(self.examples)
+
+    def __getitem__(self, idx):
+        return self.examples[idx]
 
 
 def train(
@@ -65,28 +103,17 @@ def train(
     model.train()
 
     dataset = TextDataset(train_file, tokenizer)
-    dataloader = DataLoader(dataset, batch_size=batch_size)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    # Calculate total steps before training (only on main process to avoid redundant computation)
+    # Calculate total steps - now we can use len() since we're using regular Dataset
+    # Use ceiling division: (len + batch_size - 1) // batch_size
+    total_steps = ((len(dataset) + batch_size - 1) // batch_size) * epochs
+
     if accelerator.is_main_process:
-        logger.info("Calculating total steps...")
-        total_steps = 0
-        temp_dataloader = DataLoader(dataset, batch_size=batch_size)
-        for _ in temp_dataloader:
-            total_steps += 1
-        total_steps = total_steps * epochs
-        logger.info(f"Total steps: {total_steps}")
-    else:
-        total_steps = 0
-
-    # Broadcast total_steps from main process to all processes
-    if accelerator.num_processes > 1:
-        # Use CPU tensor for broadcasting to avoid device issues
-        total_steps_tensor = torch.tensor([total_steps], dtype=torch.long)
-        accelerator.broadcast(total_steps_tensor, from_process=0)
-        total_steps = total_steps_tensor.item()
-        if not accelerator.is_main_process:
-            logger.info(f"Total steps (broadcasted): {total_steps}")
+        logger.info(f"Dataset size: {len(dataset)} examples")
+        logger.info(
+            f"Total steps: {total_steps} (batch_size={batch_size}, epochs={epochs})"
+        )
 
     # Validate total_steps
     if total_steps <= 0:
