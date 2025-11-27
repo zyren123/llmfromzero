@@ -50,6 +50,9 @@ class TextDataset(Dataset):
             padding="max_length",
             return_tensors="pt",
         )
+        # Remove batch dimension if present: [1, seq_len] -> [seq_len]
+        if input_ids.dim() > 1:
+            input_ids = input_ids.squeeze(0)
         labels = input_ids.clone()
         labels[input_ids == self.tokenizer.pad_token_id] = -100
         return {
