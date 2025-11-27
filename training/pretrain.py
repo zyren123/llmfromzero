@@ -53,8 +53,8 @@ class TextDataset(Dataset):
         labels = input_ids.clone()
         labels[input_ids == self.tokenizer.pad_token_id] = -100
         return {
-            "input_ids": torch.tensor(input_ids, dtype=torch.long),
-            "labels": torch.tensor(labels, dtype=torch.long),
+            "input_ids": input_ids,
+            "labels": labels,
         }
 
 
@@ -101,8 +101,9 @@ def train(
         loop = tqdm(dataloader, desc=f"Epoch {epoch + 1}/{epochs}")
         for i, batch in enumerate(loop):
             # input_ids = batch.to(device) # Handled by accelerate
-            input_ids = batch
-            labels = input_ids.clone()
+            input_ids = batch["input_ids"]
+            labels = batch["labels"]
+            # labels = input_ids.clone()
 
             outputs = model(input_ids=input_ids, labels=labels)
             loss = outputs["loss"]
