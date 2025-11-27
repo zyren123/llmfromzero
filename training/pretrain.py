@@ -81,16 +81,25 @@ def train(
 
     # Broadcast total_steps from main process to all processes
     if accelerator.num_processes > 1:
-        total_steps_tensor = torch.tensor(total_steps, device=accelerator.device)
+        # Use CPU tensor for broadcasting to avoid device issues
+        total_steps_tensor = torch.tensor([total_steps], dtype=torch.long)
         accelerator.broadcast(total_steps_tensor, from_process=0)
         total_steps = total_steps_tensor.item()
         if not accelerator.is_main_process:
             logger.info(f"Total steps (broadcasted): {total_steps}")
 
+    # Validate total_steps
+    if total_steps <= 0:
+        raise ValueError(
+            f"Invalid total_steps: {total_steps}. Please check your dataset and ensure it's not empty."
+        )
+
     optimizer = AdamW(model.parameters(), lr=lr)
 
     # Create learning rate scheduler with warmup
-    warmup_steps = int(total_steps * 0.1)  # 10% of total steps for warmup
+    warmup_steps = max(
+        1, int(total_steps * 0.1)
+    )  # 10% of total steps for warmup, at least 1
     scheduler = get_cosine_schedule_with_warmup(
         optimizer,
         num_warmup_steps=warmup_steps,
