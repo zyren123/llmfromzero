@@ -22,7 +22,6 @@ class TextDataset(Dataset):
         self.block_size = block_size
 
         # Read file and handle JSONL or plain text
-        texts = []
         with open(file_path, "r", encoding="utf-8") as f:
             for line in f:
                 text = line.strip()
@@ -33,10 +32,10 @@ class TextDataset(Dataset):
                 try:
                     data = json.loads(text)
                     if isinstance(data, dict) and "text" in data:
-                        texts.append(data["text"])
+                        self.examples.append(data["text"])
                 except json.JSONDecodeError:
                     # Treat as plain text line
-                    texts.append(text)
+                    self.examples.append(text)
 
     def __len__(self):
         return len(self.examples)
