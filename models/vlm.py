@@ -50,7 +50,13 @@ class LuluVLConfig(PretrainedConfig):
         use_return_dict=True,
         **kwargs,
     ):
-        super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
+        super().__init__(
+            tie_word_embeddings=tie_word_embeddings,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            use_return_dict=use_return_dict,
+            **kwargs,
+        )
         if vision_config is None:
             self.vision_config = VisionConfig()
         elif isinstance(vision_config, dict):
@@ -75,9 +81,6 @@ class LuluVLConfig(PretrainedConfig):
 
         self.projector_hidden_act = projector_hidden_act
         self.use_cache = use_cache
-        self.output_attentions = output_attentions
-        self.output_hidden_states = output_hidden_states
-        self.use_return_dict = use_return_dict
 
 
 class VisionEncoder(nn.Module):
@@ -144,19 +147,29 @@ class LuluVLModel(PreTrainedModel, GenerationMixin):
         output_hidden_states=None,
         return_dict=None,
         labels=None,
-        **kwargs
+        **kwargs,
     ):
         # Set defaults from config
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_attentions = (
+            output_attentions
+            if output_attentions is not None
+            else self.config.output_attentions
+        )
         output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+            output_hidden_states
+            if output_hidden_states is not None
+            else self.config.output_hidden_states
         )
         use_cache = use_cache if use_cache is not None else self.config.use_cache
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
 
         # Get input embeddings
         if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
+            raise ValueError(
+                "You cannot specify both input_ids and inputs_embeds at the same time"
+            )
         elif input_ids is not None:
             batch_size, text_seq_length = input_ids.shape
             text_embeds = self.language_model.embed_tokens(input_ids)
@@ -183,12 +196,16 @@ class LuluVLModel(PreTrainedModel, GenerationMixin):
             if pixel_values is not None:
                 # Add mask for image tokens (all 1s)
                 image_mask = torch.ones(
-                    (batch_size, image_seq_length), device=attention_mask.device, dtype=attention_mask.dtype
+                    (batch_size, image_seq_length),
+                    device=attention_mask.device,
+                    dtype=attention_mask.dtype,
                 )
                 attention_mask = torch.cat([image_mask, attention_mask], dim=1)
         else:
             # Create default attention mask
-            attention_mask = torch.ones((batch_size, total_seq_length), device=inputs_embeds.device)
+            attention_mask = torch.ones(
+                (batch_size, total_seq_length), device=inputs_embeds.device
+            )
 
         # Handle labels
         if labels is not None and pixel_values is not None:
@@ -213,40 +230,86 @@ class LuluVLModel(PreTrainedModel, GenerationMixin):
                         # Subsequent forwards: only new text tokens
                         if cache_len >= image_seq_length:
                             # We already have image tokens in cache, only add new text positions
-                            position_ids = torch.arange(
-                                cache_len, cache_len + text_seq_length, device=inputs_embeds.device
-                            ).unsqueeze(0).expand(batch_size, -1)
+                            position_ids = (
+                                torch.arange(
+                                    cache_len,
+                                    cache_len + text_seq_length,
+                                    device=inputs_embeds.device,
+                                )
+                                .unsqueeze(0)
+                                .expand(batch_size, -1)
+                            )
                         else:
                             # First forward with images
-                            image_positions = torch.arange(0, image_seq_length, device=inputs_embeds.device)
-                            text_positions = torch.arange(
-                                image_seq_length, image_seq_length + text_seq_length, device=inputs_embeds.device
+                            image_positions = torch.arange(
+                                0, image_seq_length, device=inputs_embeds.device
                             )
-                            position_ids = torch.cat([image_positions, text_positions], dim=0).unsqueeze(0).expand(batch_size, -1)
+                            text_positions = torch.arange(
+                                image_seq_length,
+                                image_seq_length + text_seq_length,
+                                device=inputs_embeds.device,
+                            )
+                            position_ids = (
+                                torch.cat([image_positions, text_positions], dim=0)
+                                .unsqueeze(0)
+                                .expand(batch_size, -1)
+                            )
                     else:
-                        position_ids = torch.arange(
-                            cache_len, cache_len + text_seq_length, device=inputs_embeds.device
-                        ).unsqueeze(0).expand(batch_size, -1)
+                        position_ids = (
+                            torch.arange(
+                                cache_len,
+                                cache_len + text_seq_length,
+                                device=inputs_embeds.device,
+                            )
+                            .unsqueeze(0)
+                            .expand(batch_size, -1)
+                        )
                 else:
                     # No cache yet
                     if pixel_values is not None:
-                        image_positions = torch.arange(0, image_seq_length, device=inputs_embeds.device)
-                        text_positions = torch.arange(
-                            image_seq_length, image_seq_length + text_seq_length, device=inputs_embeds.device
+                        image_positions = torch.arange(
+                            0, image_seq_length, device=inputs_embeds.device
                         )
-                        position_ids = torch.cat([image_positions, text_positions], dim=0).unsqueeze(0).expand(batch_size, -1)
+                        text_positions = torch.arange(
+                            image_seq_length,
+                            image_seq_length + text_seq_length,
+                            device=inputs_embeds.device,
+                        )
+                        position_ids = (
+                            torch.cat([image_positions, text_positions], dim=0)
+                            .unsqueeze(0)
+                            .expand(batch_size, -1)
+                        )
                     else:
-                        position_ids = torch.arange(0, text_seq_length, device=inputs_embeds.device).unsqueeze(0).expand(batch_size, -1)
+                        position_ids = (
+                            torch.arange(
+                                0, text_seq_length, device=inputs_embeds.device
+                            )
+                            .unsqueeze(0)
+                            .expand(batch_size, -1)
+                        )
             else:
                 # No cache
                 if pixel_values is not None:
-                    image_positions = torch.arange(0, image_seq_length, device=inputs_embeds.device)
-                    text_positions = torch.arange(
-                        image_seq_length, image_seq_length + text_seq_length, device=inputs_embeds.device
+                    image_positions = torch.arange(
+                        0, image_seq_length, device=inputs_embeds.device
                     )
-                    position_ids = torch.cat([image_positions, text_positions], dim=0).unsqueeze(0).expand(batch_size, -1)
+                    text_positions = torch.arange(
+                        image_seq_length,
+                        image_seq_length + text_seq_length,
+                        device=inputs_embeds.device,
+                    )
+                    position_ids = (
+                        torch.cat([image_positions, text_positions], dim=0)
+                        .unsqueeze(0)
+                        .expand(batch_size, -1)
+                    )
                 else:
-                    position_ids = torch.arange(0, text_seq_length, device=inputs_embeds.device).unsqueeze(0).expand(batch_size, -1)
+                    position_ids = (
+                        torch.arange(0, text_seq_length, device=inputs_embeds.device)
+                        .unsqueeze(0)
+                        .expand(batch_size, -1)
+                    )
 
         # Create causal mask
         seq_len = inputs_embeds.size(1)
@@ -291,7 +354,9 @@ class LuluVLModel(PreTrainedModel, GenerationMixin):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
-            past_key_value = past_key_values[idx] if past_key_values is not None else None
+            past_key_value = (
+                past_key_values[idx] if past_key_values is not None else None
+            )
 
             layer_outputs = decoder_layer(
                 hidden_states,

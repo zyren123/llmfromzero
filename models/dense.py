@@ -33,7 +33,13 @@ class LuluConfig(PretrainedConfig):
         use_return_dict=True,
         **kwargs,
     ):
-        super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
+        super().__init__(
+            tie_word_embeddings=tie_word_embeddings,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            use_return_dict=use_return_dict,
+            **kwargs,
+        )
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size
@@ -46,9 +52,6 @@ class LuluConfig(PretrainedConfig):
         self.rms_norm_eps = rms_norm_eps
         self.use_cache = use_cache
         self.rope_theta = rope_theta
-        self.output_attentions = output_attentions
-        self.output_hidden_states = output_hidden_states
-        self.use_return_dict = use_return_dict
 
 
 class RMSNorm(nn.Module):

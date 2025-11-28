@@ -35,7 +35,13 @@ class LuluMoeConfig(PretrainedConfig):
         use_return_dict=True,
         **kwargs,
     ):
-        super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
+        super().__init__(
+            tie_word_embeddings=tie_word_embeddings,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            use_return_dict=use_return_dict,
+            **kwargs,
+        )
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.num_hidden_layers = num_hidden_layers
@@ -50,9 +56,6 @@ class LuluMoeConfig(PretrainedConfig):
         self.rms_norm_eps = rms_norm_eps
         self.rope_theta = rope_theta
         self.use_cache = use_cache
-        self.output_attentions = output_attentions
-        self.output_hidden_states = output_hidden_states
-        self.use_return_dict = use_return_dict
 
 
 class RMSNorm(nn.Module):
@@ -166,7 +169,12 @@ class MoEAttention(nn.Module):
         )
 
     def forward(
-        self, hidden_states, attention_mask=None, position_ids=None, past_key_value=None, use_cache=False
+        self,
+        hidden_states,
+        attention_mask=None,
+        position_ids=None,
+        past_key_value=None,
+        use_cache=False,
     ):
         bsz, q_len, _ = hidden_states.size()
 
@@ -187,7 +195,7 @@ class MoEAttention(nn.Module):
 
         # Determine sequence length for RoPE
         kv_seq_len = k.shape[2]
-        
+
         # Prepare position_ids for RoPE
         # When using cache, q and k have different lengths
         if position_ids is not None:
@@ -195,7 +203,11 @@ class MoEAttention(nn.Module):
             if past_key_value is not None and position_ids.shape[-1] == q_len:
                 # Only new tokens provided, need full position_ids for k
                 cache_len = past_k.shape[2]
-                cache_position_ids = torch.arange(0, cache_len, device=position_ids.device).unsqueeze(0).expand(bsz, -1)
+                cache_position_ids = (
+                    torch.arange(0, cache_len, device=position_ids.device)
+                    .unsqueeze(0)
+                    .expand(bsz, -1)
+                )
                 position_ids_k = torch.cat([cache_position_ids, position_ids], dim=1)
                 position_ids_q = position_ids
             else:
@@ -206,18 +218,28 @@ class MoEAttention(nn.Module):
             # Generate position_ids if not provided
             if past_key_value is not None:
                 cache_len = past_k.shape[2]
-                position_ids_q = torch.arange(cache_len, cache_len + q_len, device=k.device).unsqueeze(0).expand(bsz, -1)
-                cache_position_ids = torch.arange(0, cache_len, device=k.device).unsqueeze(0).expand(bsz, -1)
+                position_ids_q = (
+                    torch.arange(cache_len, cache_len + q_len, device=k.device)
+                    .unsqueeze(0)
+                    .expand(bsz, -1)
+                )
+                cache_position_ids = (
+                    torch.arange(0, cache_len, device=k.device)
+                    .unsqueeze(0)
+                    .expand(bsz, -1)
+                )
                 position_ids_k = torch.cat([cache_position_ids, position_ids_q], dim=1)
             else:
-                position_ids_q = torch.arange(0, q_len, device=k.device).unsqueeze(0).expand(bsz, -1)
+                position_ids_q = (
+                    torch.arange(0, q_len, device=k.device).unsqueeze(0).expand(bsz, -1)
+                )
                 position_ids_k = position_ids_q
-        
+
         # Apply RoPE
         # Get cos/sin for q and k separately
         cos_q, sin_q = self.rotary_emb(q, seq_len=q_len)
         cos_k, sin_k = self.rotary_emb(k, seq_len=kv_seq_len)
-        
+
         # Apply RoPE with appropriate position_ids
         q, _ = apply_rotary_pos_emb(q, q, cos_q, sin_q, position_ids=position_ids_q)
         _, k = apply_rotary_pos_emb(k, k, cos_k, sin_k, position_ids=position_ids_k)
@@ -231,7 +253,9 @@ class MoEAttention(nn.Module):
             v_repeated = v
 
         # Attention
-        attn_weights = torch.matmul(q, k_repeated.transpose(2, 3)) / math.sqrt(self.head_dim)
+        attn_weights = torch.matmul(q, k_repeated.transpose(2, 3)) / math.sqrt(
+            self.head_dim
+        )
 
         if attention_mask is not None:
             attn_weights = attn_weights + attention_mask
@@ -245,7 +269,7 @@ class MoEAttention(nn.Module):
             .reshape(bsz, q_len, self.hidden_size)
         )
         output = self.o_proj(attn_output)
-        
+
         # Return cache if use_cache is True
         if use_cache:
             # Return k, v before GQA repetition (original num_key_value_heads)
@@ -327,15 +351,22 @@ class LuluMoeBlock(nn.Module):
             config.hidden_size, eps=config.rms_norm_eps
         )
 
-    def forward(self, hidden_states, attention_mask=None, position_ids=None, past_key_value=None, use_cache=False):
+    def forward(
+        self,
+        hidden_states,
+        attention_mask=None,
+        position_ids=None,
+        past_key_value=None,
+        use_cache=False,
+    ):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
         hidden_states, present_key_value = self.self_attn(
-            hidden_states, 
+            hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_value=past_key_value,
-            use_cache=use_cache
+            use_cache=use_cache,
         )
         hidden_states = residual + hidden_states
 
@@ -343,7 +374,7 @@ class LuluMoeBlock(nn.Module):
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.moe(hidden_states)
         hidden_states = residual + hidden_states
-        
+
         if use_cache:
             return hidden_states, present_key_value
         return hidden_states
@@ -375,19 +406,29 @@ class LuluMoeModel(PreTrainedModel, GenerationMixin):
         output_hidden_states=None,
         return_dict=None,
         labels=None,
-        **kwargs
+        **kwargs,
     ):
         # Set defaults from config
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_attentions = (
+            output_attentions
+            if output_attentions is not None
+            else self.config.output_attentions
+        )
         output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+            output_hidden_states
+            if output_hidden_states is not None
+            else self.config.output_hidden_states
         )
         use_cache = use_cache if use_cache is not None else self.config.use_cache
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
 
         # Get input embeddings
         if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
+            raise ValueError(
+                "You cannot specify both input_ids and inputs_embeds at the same time"
+            )
         elif input_ids is not None:
             batch_size, seq_length = input_ids.shape
             hidden_states = self.embed_tokens(input_ids)
@@ -403,9 +444,19 @@ class LuluMoeModel(PreTrainedModel, GenerationMixin):
                 # During generation, position_ids should be the position of the new tokens
                 # past_key_values[0][0] is the k cache from first layer, shape [bs, heads, cache_len, head_dim]
                 cache_len = past_key_values[0][0].shape[2]
-                position_ids = torch.arange(cache_len, cache_len + seq_length, device=hidden_states.device).unsqueeze(0).expand(batch_size, -1)
+                position_ids = (
+                    torch.arange(
+                        cache_len, cache_len + seq_length, device=hidden_states.device
+                    )
+                    .unsqueeze(0)
+                    .expand(batch_size, -1)
+                )
             else:
-                position_ids = torch.arange(0, seq_length, device=hidden_states.device).unsqueeze(0).expand(batch_size, -1)
+                position_ids = (
+                    torch.arange(0, seq_length, device=hidden_states.device)
+                    .unsqueeze(0)
+                    .expand(batch_size, -1)
+                )
 
         # Create causal mask
         if attention_mask is None:
@@ -449,7 +500,9 @@ class LuluMoeModel(PreTrainedModel, GenerationMixin):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
-            past_key_value = past_key_values[idx] if past_key_values is not None else None
+            past_key_value = (
+                past_key_values[idx] if past_key_values is not None else None
+            )
 
             layer_outputs = decoder_layer(
                 hidden_states,
