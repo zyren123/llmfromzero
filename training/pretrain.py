@@ -68,10 +68,15 @@ def train(
     epochs=1,
     batch_size=4,
     lr=1e-4,
+    gradient_accumulation_steps=1,
     accelerator=None,
 ):
     logger = Logger("pretrain")
     logger.info(f"Starting Pretraining on {accelerator.device}...")
+    logger.info(f"Gradient Accumulation Steps: {gradient_accumulation_steps}")
+    logger.info(
+        f"Effective Batch Size: {batch_size * gradient_accumulation_steps * accelerator.num_processes}"
+    )
 
     # model.to(device) # Handled by accelerate
     model.train()
@@ -84,15 +89,22 @@ def train(
     optimizer = AdamW(model.parameters(), lr=lr)
 
     # Calculate total steps for scheduler and epoch calculation
+    # With gradient accumulation, we update less frequently
     steps_per_epoch = (len(dataset) + batch_size - 1) // batch_size  # Ceiling division
-    total_steps = steps_per_epoch * epochs
+    # Optimizer updates per epoch
+    optimizer_steps_per_epoch = (
+        steps_per_epoch + gradient_accumulation_steps - 1
+    ) // gradient_accumulation_steps
+    total_optimizer_steps = optimizer_steps_per_epoch * epochs
 
-    # Calculate warmup steps (10% of total steps)
-    warmup_steps = int(total_steps * 0.1)
+    # Calculate warmup steps (10% of total optimizer steps)
+    warmup_steps = int(total_optimizer_steps * 0.1)
 
     # Create scheduler with warmup
     scheduler = get_cosine_schedule_with_warmup(
-        optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps
+        optimizer,
+        num_warmup_steps=warmup_steps,
+        num_training_steps=total_optimizer_steps,
     )
 
     model, optimizer, dataloader, scheduler = accelerator.prepare(
@@ -100,6 +112,7 @@ def train(
     )
 
     global_step = 0
+    optimizer_step = 0
     for epoch in range(epochs):
         loop = tqdm(dataloader, desc=f"Epoch {epoch + 1}/{epochs}")
         for i, batch in enumerate(loop):
@@ -108,20 +121,31 @@ def train(
             labels = batch["labels"]
             # labels = input_ids.clone()
 
-            outputs = model(input_ids=input_ids, labels=labels)
-            loss = outputs["loss"]
+            # Use accelerator's accumulate context manager
+            with accelerator.accumulate(model):
+                outputs = model(input_ids=input_ids, labels=labels)
+                loss = outputs["loss"]
 
-            optimizer.zero_grad()
-            accelerator.backward(loss)
-            optimizer.step()
-            scheduler.step()
+                accelerator.backward(loss)
+
+                # Only update optimizer when accumulation is complete
+                # The accumulate context manager handles this automatically
+                if accelerator.sync_gradients:
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad()
+                    optimizer_step += 1
 
             global_step += 1
             # Calculate epoch as decimal: current_step / total_steps
-            epoch_decimal = global_step / total_steps if total_steps > 0 else 0.0
+            epoch_decimal = (
+                optimizer_step / total_optimizer_steps
+                if total_optimizer_steps > 0
+                else 0.0
+            )
             current_lr = scheduler.get_last_lr()[0]
 
-            loop.set_postfix(loss=loss.item(), lr=current_lr)
+            loop.set_postfix(loss=loss.item(), lr=current_lr, opt_step=optimizer_step)
 
             # Log metrics every 10 steps (or adjust as needed)
             if global_step % 10 == 0:
@@ -130,6 +154,7 @@ def train(
                         "train_loss": loss.item(),
                         "epoch": epoch_decimal,
                         "step": global_step,
+                        "optimizer_step": optimizer_step,
                         "learning_rate": current_lr,
                     }
                 )
@@ -137,6 +162,7 @@ def train(
                     {
                         "epoch": f"{epoch_decimal:.4f}",
                         "step": global_step,
+                        "opt_step": optimizer_step,
                         "loss": f"{loss.item():.4f}",
                         "learning_rate": f"{current_lr:.6f}",
                     }

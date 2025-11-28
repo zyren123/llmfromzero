@@ -27,9 +27,10 @@ class LuluConfig(PretrainedConfig):
         rms_norm_eps=1e-6,
         use_cache=True,
         rope_theta=10000.0,
+        tie_word_embeddings=True,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size

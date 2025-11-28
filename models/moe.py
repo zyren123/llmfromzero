@@ -28,9 +28,10 @@ class LuluMoeConfig(PretrainedConfig):
         initializer_range=0.02,
         rms_norm_eps=1e-6,
         rope_theta=10000.0,
+        tie_word_embeddings=True,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.num_hidden_layers = num_hidden_layers

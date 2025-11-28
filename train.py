@@ -69,6 +69,12 @@ def main():
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument(
+        "--gradient_accumulation_steps",
+        type=int,
+        default=1,
+        help="Number of gradient accumulation steps",
+    )
+    parser.add_argument(
         "--wandb_project",
         type=str,
         default="lulu-training",
@@ -79,8 +85,11 @@ def main():
 
     logger = Logger("train")
 
-    # Initialize Accelerator
-    accelerator = Accelerator(log_with="wandb")
+    # Initialize Accelerator with gradient accumulation
+    accelerator = Accelerator(
+        log_with="wandb",
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+    )
     accelerator.init_trackers(project_name=args.wandb_project, config=vars(args))
 
     logger.info(f"Starting training with args: {args}")
@@ -112,6 +121,7 @@ def main():
             epochs=args.epochs,
             batch_size=args.batch_size,
             lr=args.lr,
+            gradient_accumulation_steps=args.gradient_accumulation_steps,
             accelerator=accelerator,
         )
     elif args.mode == "sft":
@@ -136,10 +146,9 @@ def main():
         )
 
     # Save Model
-    # Save Model
     accelerator.wait_for_everyone()
     unwrapped_model = accelerator.unwrap_model(trained_model)
-    unwrapped_model.save_pretrained(args.output_dir)
+    unwrapped_model.save_pretrained(args.output_dir, safe_serialization=False)
     tokenizer.save_pretrained(args.output_dir)
     logger.info(f"Model and tokenizer saved to {args.output_dir}")
 

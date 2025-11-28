@@ -43,9 +43,10 @@ class LuluVLConfig(PretrainedConfig):
         vision_config=None,
         text_config=None,
         projector_hidden_act="gelu",
+        tie_word_embeddings=True,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
         if vision_config is None:
             self.vision_config = VisionConfig()
         elif isinstance(vision_config, dict):
