@@ -102,15 +102,16 @@ def train_dpo(
     lr=1e-5,
     accelerator=None,
 ):
-    logger = Logger("dpo")
+    logger = Logger("dpo", is_main_process=accelerator.is_main_process)
     logger.info(f"Starting DPO on {accelerator.device}...")
     # model.to(device) # Handled by accelerate
     model.train()
 
     if ref_model is None:
-        print(
-            "No reference model provided, creating a copy of the model as reference..."
-        )
+        if accelerator.is_main_process:
+            print(
+                "No reference model provided, creating a copy of the model as reference..."
+            )
         ref_model = copy.deepcopy(model)
 
     # ref_model.to(device) # Handled by accelerate

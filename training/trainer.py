@@ -16,7 +16,7 @@ def train_model(
     """
     Unified training loop for Pretraining and SFT.
     """
-    logger = Logger(logger_name)
+    logger = Logger(logger_name, is_main_process=accelerator.is_main_process)
     logger.info(f"Starting training on {accelerator.device}...")
     logger.info(f"Gradient Accumulation Steps: {gradient_accumulation_steps}")
 

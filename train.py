@@ -111,14 +111,14 @@ def main():
 
     args = parser.parse_args()
 
-    logger = Logger("train")
-
     # Initialize Accelerator with gradient accumulation
     accelerator = Accelerator(
         log_with="wandb",
         gradient_accumulation_steps=args.gradient_accumulation_steps,
     )
     accelerator.init_trackers(project_name=args.wandb_project, config=vars(args))
+
+    logger = Logger("train", is_main_process=accelerator.is_main_process)
 
     logger.info(f"Starting training with args: {args}")
     logger.info(f"Accelerator device: {accelerator.device}")
@@ -139,9 +139,11 @@ def main():
     else:
         logger.info(f"Initialized {args.model_type} model from scratch")
 
-    # Create output directory
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
+    # Create output directory (only on main process)
+    if accelerator.is_main_process:
+        if not os.path.exists(args.output_dir):
+            os.makedirs(args.output_dir)
+    accelerator.wait_for_everyone()  # Wait for main process to create directory
 
     # Dispatch to training function
     if args.mode == "pretrain":
@@ -177,14 +179,15 @@ def main():
             accelerator=accelerator,
         )
 
-    # Save Model
+    # Save Model (only on main process)
     accelerator.wait_for_everyone()
-    unwrapped_model = accelerator.unwrap_model(trained_model)
-    # Convert model to fp16 before saving to reduce model size
-    unwrapped_model = unwrapped_model.to(torch.float16)
-    unwrapped_model.save_pretrained(args.output_dir, safe_serialization=False)
-    tokenizer.save_pretrained(args.output_dir)
-    logger.info(f"Model and tokenizer saved to {args.output_dir} (fp16)")
+    if accelerator.is_main_process:
+        unwrapped_model = accelerator.unwrap_model(trained_model)
+        # Convert model to fp16 before saving to reduce model size
+        unwrapped_model = unwrapped_model.to(torch.float16)
+        unwrapped_model.save_pretrained(args.output_dir, safe_serialization=False)
+        tokenizer.save_pretrained(args.output_dir)
+        logger.info(f"Model and tokenizer saved to {args.output_dir} (fp16)")
 
     accelerator.end_training()
 
