@@ -18,18 +18,40 @@ from training.dpo import train_dpo
 from utils.logger import Logger
 
 
-def get_model(model_type, vocab_size):
-    if model_type == "lulu":
-        config = LuluConfig(vocab_size=vocab_size)
-        model = LuluModel(config)
-    elif model_type == "lulu_moe":
-        config = LuluMoeConfig(vocab_size=vocab_size)
-        model = LuluMoeModel(config)
-    elif model_type == "lulu_vl":
-        config = LuluVLConfig(vocab_size=vocab_size)
-        model = LuluVLModel(config)
+def get_model(model_type, vocab_size, model_path=None):
+    """Initialize or load a model.
+
+    Args:
+        model_type: Type of model architecture (lulu, lulu_moe, lulu_vl)
+        vocab_size: Vocabulary size for new models
+        model_path: Optional path to load pretrained model from
+
+    Returns:
+        Model instance
+    """
+    if model_path and os.path.exists(model_path):
+        # Load from pretrained checkpoint
+        if model_type == "lulu":
+            model = LuluModel.from_pretrained(model_path)
+        elif model_type == "lulu_moe":
+            model = LuluMoeModel.from_pretrained(model_path)
+        elif model_type == "lulu_vl":
+            model = LuluVLModel.from_pretrained(model_path)
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
     else:
-        raise ValueError(f"Unknown model type: {model_type}")
+        # Initialize from scratch
+        if model_type == "lulu":
+            config = LuluConfig(vocab_size=vocab_size)
+            model = LuluModel(config)
+        elif model_type == "lulu_moe":
+            config = LuluMoeConfig(vocab_size=vocab_size)
+            model = LuluMoeModel(config)
+        elif model_type == "lulu_vl":
+            config = LuluVLConfig(vocab_size=vocab_size)
+            model = LuluVLModel(config)
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
 
     return model
 
@@ -80,6 +102,12 @@ def main():
         default="lulu-training",
         help="WandB project name",
     )
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        default=None,
+        help="Path to pretrained model checkpoint (optional, will initialize from scratch if not provided)",
+    )
 
     args = parser.parse_args()
 
@@ -104,9 +132,12 @@ def main():
         f"Loaded tokenizer from {args.tokenizer_path}, vocab size: {len(tokenizer)}"
     )
 
-    # Initialize Model
-    model = get_model(args.model_type, len(tokenizer))
-    logger.info(f"Initialized {args.model_type} model")
+    # Initialize or Load Model
+    model = get_model(args.model_type, len(tokenizer), args.model_path)
+    if args.model_path:
+        logger.info(f"Loaded {args.model_type} model from {args.model_path}")
+    else:
+        logger.info(f"Initialized {args.model_type} model from scratch")
 
     # Create output directory
     if not os.path.exists(args.output_dir):
@@ -132,6 +163,7 @@ def main():
             epochs=args.epochs,
             batch_size=args.batch_size,
             lr=args.lr,
+            gradient_accumulation_steps=args.gradient_accumulation_steps,
             accelerator=accelerator,
         )
     elif args.mode == "dpo":
@@ -148,9 +180,11 @@ def main():
     # Save Model
     accelerator.wait_for_everyone()
     unwrapped_model = accelerator.unwrap_model(trained_model)
+    # Convert model to fp16 before saving to reduce model size
+    unwrapped_model = unwrapped_model.to(torch.float16)
     unwrapped_model.save_pretrained(args.output_dir, safe_serialization=False)
     tokenizer.save_pretrained(args.output_dir)
-    logger.info(f"Model and tokenizer saved to {args.output_dir}")
+    logger.info(f"Model and tokenizer saved to {args.output_dir} (fp16)")
 
     accelerator.end_training()
 

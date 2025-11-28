@@ -239,8 +239,8 @@ def train_tokenizer(
     # Wrap in Transformers PreTrainedTokenizerFast
     fast_tokenizer = PreTrainedTokenizerFast(
         tokenizer_object=tokenizer,
-        bos_token="<|endoftext|>",
-        eos_token="<|endoftext|>",
+        bos_token="<|im_start|>",
+        eos_token="<|im_end|>",
         unk_token="<|endoftext|>",
         pad_token="<|endoftext|>",
         additional_special_tokens=special_tokens[
