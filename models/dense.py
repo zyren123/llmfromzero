@@ -199,7 +199,6 @@ class LuluAttention(nn.Module):
         kv_seq_len = k.shape[2]
 
         # Prepare position_ids for RoPE
-        # When using cache, q and k have different lengths
         if position_ids is not None:
             # position_ids provided: typically [bs, q_len] for new tokens
             if past_key_value is not None and position_ids.shape[-1] == q_len:
@@ -238,13 +237,20 @@ class LuluAttention(nn.Module):
                 position_ids_k = position_ids_q
 
         # Apply RoPE
-        # Get cos/sin for q and k separately
-        cos_q, sin_q = self.rotary_emb(q, seq_len=q_len)
-        cos_k, sin_k = self.rotary_emb(k, seq_len=kv_seq_len)
+        # FIXED: Calculate max position needed to ensure cache is big enough to be indexed by position_ids
+        if position_ids is not None:
+            # We need the cache to cover the largest index in position_ids
+            max_pos = max(position_ids_q.max().item(), position_ids_k.max().item()) + 1
+        else:
+            max_pos = max(q_len, kv_seq_len)
+
+        # Get the full needed cos/sin cache
+        cos, sin = self.rotary_emb(v, seq_len=max_pos)
 
         # Apply RoPE with appropriate position_ids
-        q, _ = apply_rotary_pos_emb(q, q, cos_q, sin_q, position_ids=position_ids_q)
-        _, k = apply_rotary_pos_emb(k, k, cos_k, sin_k, position_ids=position_ids_k)
+        # Note: apply_rotary_pos_emb expects cos/sin to be indexable by position_ids
+        q, _ = apply_rotary_pos_emb(q, q, cos, sin, position_ids=position_ids_q)
+        _, k = apply_rotary_pos_emb(k, k, cos, sin, position_ids=position_ids_k)
 
         # Repeat KV for GQA (before attention computation)
         if self.num_key_value_groups > 1:
@@ -352,6 +358,64 @@ class LuluModel(PreTrainedModel, GenerationMixin):
 
         self.post_init()
 
+    def _init_weights(self, module):
+        std = self.config.initializer_range
+        if isinstance(module, nn.Linear):
+            module.weight.data.normal_(mean=0.0, std=std)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=std)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+
+    # ------------------------------------------------------------------
+    # ADDED METHODS FOR GENERATION COMPATIBILITY
+    # ------------------------------------------------------------------
+    def get_input_embeddings(self):
+        return self.embed_tokens
+
+    def set_input_embeddings(self, value):
+        self.embed_tokens = value
+
+    def get_output_embeddings(self):
+        return self.lm_head
+
+    def set_output_embeddings(self, new_embeddings):
+        self.lm_head = new_embeddings
+
+    def prepare_inputs_for_generation(
+        self,
+        input_ids,
+        past_key_values=None,
+        attention_mask=None,
+        inputs_embeds=None,
+        **kwargs,
+    ):
+        if past_key_values is not None:
+            # If we have cache, we only need the last input token
+            input_ids = input_ids[:, -1:]
+
+        position_ids = kwargs.get("position_ids", None)
+        if attention_mask is not None and position_ids is None:
+            # Create position_ids on the fly for batching
+            position_ids = attention_mask.long().cumsum(-1) - 1
+            position_ids.masked_fill_(attention_mask == 0, 1)
+            if past_key_values:
+                # If we have cache, we only need the position of the last token
+                position_ids = position_ids[:, -1].unsqueeze(-1)
+
+        model_inputs = {
+            "input_ids": input_ids,
+            "past_key_values": past_key_values,
+            "use_cache": kwargs.get("use_cache"),
+            "attention_mask": attention_mask,
+            "position_ids": position_ids,
+        }
+        return model_inputs
+
+    # ------------------------------------------------------------------
+
     def forward(
         self,
         input_ids=None,
@@ -441,8 +505,15 @@ class LuluModel(PreTrainedModel, GenerationMixin):
             elif attention_mask.dim() == 3:
                 # [batch_size, 1, seq_len] -> [batch_size, 1, 1, seq_len]
                 attention_mask = attention_mask[:, None, :, :]
-            # Convert 0/1 mask to -inf/0 mask
-            attention_mask = (1.0 - attention_mask) * float("-inf")
+
+            # FIXED: Replace 1s with 0s and 0s with -inf safely without using arithmetic that causes NaN
+            # Old error code: attention_mask = (1.0 - attention_mask) * float("-inf")
+
+            # Create a new mask initialized to 0s
+            expanded_mask = torch.zeros_like(attention_mask, dtype=hidden_states.dtype)
+            # Fill the positions where the original mask was 0 with -inf
+            expanded_mask.masked_fill_(attention_mask == 0, float("-inf"))
+            attention_mask = expanded_mask
 
         # Initialize past_key_values if None
         if past_key_values is None:

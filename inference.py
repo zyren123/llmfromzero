@@ -1,6 +1,6 @@
 import torch
 from transformers import PreTrainedTokenizerFast
-from models.dense import DenseConfig, DenseModel
+from models.dense import LuluConfig, LuluModel
 # Import other models if needed
 
 
@@ -68,7 +68,7 @@ if __name__ == "__main__":
     # Example usage with a dummy model
     # 1. Load Tokenizer
     try:
-        tokenizer = PreTrainedTokenizerFast.from_pretrained("data/tokenizer")
+        tokenizer = PreTrainedTokenizerFast.from_pretrained("lulu_tokenizer")
     except:
         print(
             "Tokenizer not found in data/tokenizer. Please run verify_project.py first to generate it."
@@ -76,8 +76,8 @@ if __name__ == "__main__":
         exit()
 
     # 2. Load Model (Dummy initialization for demo)
-    config = DenseConfig(vocab_size=len(tokenizer), hidden_size=64, num_hidden_layers=2)
-    model = DenseModel(config)
+    config = LuluConfig(vocab_size=len(tokenizer), hidden_size=64, num_hidden_layers=2)
+    model = LuluModel(config)
 
     # 3. Generate
     generate(model, tokenizer, "Solve 2 + 2")
