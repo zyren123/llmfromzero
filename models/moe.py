@@ -32,14 +32,14 @@ class LuluMoeConfig(PretrainedConfig):
         use_cache=True,
         output_attentions=False,
         output_hidden_states=False,
-        use_return_dict=True,
+        # use_return_dict=True,
         **kwargs,
     ):
         super().__init__(
             tie_word_embeddings=tie_word_embeddings,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
-            use_return_dict=use_return_dict,
+            # use_return_dict=use_return_dict,
             **kwargs,
         )
         self.vocab_size = vocab_size
