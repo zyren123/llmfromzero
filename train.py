@@ -2,7 +2,7 @@ import argparse
 import torch
 import os
 import sys
-from transformers import PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizerFast, AutoTokenizer
 from accelerate import Accelerator
 import wandb
 
@@ -111,13 +111,14 @@ def main():
 
     parser.add_argument(
         "--use_gated_attention",
-        type=bool,
-        default=True,
+        type=str,
+        default="True",
+        choices=["True", "False"],
         help="Use gated attention",
     )
 
     args = parser.parse_args()
-
+    args.use_gated_attention = args.use_gated_attention == "True"
     # Initialize Accelerator with gradient accumulation
     accelerator = Accelerator(
         log_with="wandb",
@@ -134,7 +135,14 @@ def main():
     if not os.path.exists(args.tokenizer_path):
         raise FileNotFoundError(f"Tokenizer not found at {args.tokenizer_path}")
 
-    tokenizer = PreTrainedTokenizerFast.from_pretrained(args.tokenizer_path)
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
+    if tokenizer.pad_token is None:
+        if tokenizer.eos_token is not None:
+            tokenizer.pad_token = "<|endoftext|>"
+    logger.info(
+        f"Tokenizer loaded. Pad Token ID: {tokenizer.pad_token_id}, EOS Token ID: {tokenizer.eos_token_id}"
+    )
+    logger.info(f"Vocab size: {len(tokenizer)}")
     logger.info(
         f"Loaded tokenizer from {args.tokenizer_path}, vocab size: {len(tokenizer)}"
     )

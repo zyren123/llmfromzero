@@ -1,5 +1,5 @@
 import torch
-from transformers import PreTrainedTokenizerFast
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from models.dense import LuluConfig, LuluModel
 # Import other models if needed
 
@@ -68,10 +68,10 @@ if __name__ == "__main__":
     # Example usage with a dummy model
     # 1. Load Tokenizer
     try:
-        tokenizer = PreTrainedTokenizerFast.from_pretrained("lulu_tokenizer")
+        tokenizer = AutoTokenizer.from_pretrained("lulu_tokenizer")
     except:
         print(
-            "Tokenizer not found in data/tokenizer. Please run verify_project.py first to generate it."
+            "Tokenizer not found in lulu_tokenizer. Please run train_tokenizer.py first to generate it."
         )
         exit()
 

@@ -13,19 +13,25 @@ class TextDataset(Dataset):
 
         # Read file and handle JSONL or plain text
         with open(file_path, "r", encoding="utf-8") as f:
-            for line in f:
-                text = line.strip()
-                if not text:
-                    continue
+            lines = f.readlines()
 
-                # Try to parse as JSONL
-                try:
-                    data = json.loads(text)
-                    if isinstance(data, dict) and "text" in data:
-                        self.examples.append(data["text"])
-                except json.JSONDecodeError:
-                    # Treat as plain text line
-                    self.examples.append(text)
+        for line in lines:
+            text = line.strip()
+            if not text:
+                continue
+
+            try:
+                data = json.loads(text)
+                if isinstance(data, dict) and "text" in data:
+                    text_content = data["text"]
+                else:
+                    text_content = text
+            except json.JSONDecodeError:
+                text_content = text
+
+            # 【核心修复】：必须在文本末尾加上 EOS token
+            # 这样模型才知道这句话讲完了，要开始预测下一句或者 padding 了
+            self.examples.append(text_content + self.tokenizer.pad_token)
 
     def __len__(self):
         return len(self.examples)
