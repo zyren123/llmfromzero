@@ -6,7 +6,6 @@ from transformers import (
     AutoTokenizer,
     Trainer,
     TrainingArguments,
-    DataCollatorForLanguageModeling,
 )
 from training.pretrain import TextDataset
 from models.dense import LuluModel, LuluConfig
@@ -168,8 +167,11 @@ def main():
     dataset = TextDataset(args.data_path, tokenizer, block_size=args.block_size)
     print(f"Dataset loaded with {len(dataset)} examples.")
 
-    # Data Collator
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    # Data Collator - use default since TextDataset already creates labels
+    # DataCollatorForLanguageModeling would conflict with pre-created labels
+    from transformers import default_data_collator
+
+    data_collator = default_data_collator
 
     # Training Arguments
     training_args = TrainingArguments(
@@ -182,7 +184,7 @@ def main():
         weight_decay=0.01,
         warmup_ratio=args.warmup_ratio,
         logging_steps=10,
-        save_steps=500,
+        save_steps=2000,
         save_total_limit=2,
         fp16=args.fp16,
         bf16=args.bf16,
@@ -204,9 +206,12 @@ def main():
     print("Starting training...")
     trainer.train()
 
-    # Save final model
-    print(f"Saving model to {args.output_dir}")
-    trainer.save_model(args.output_dir)
+    # Save final model in fp16
+    print(f"Saving model to {args.output_dir} (converting to fp16)")
+    model_to_save = trainer.model
+    # Convert to fp16 to reduce model size
+    model_to_save = model_to_save.to(torch.float16)
+    model_to_save.save_pretrained(args.output_dir, safe_serialization=False)
     tokenizer.save_pretrained(args.output_dir)
 
 

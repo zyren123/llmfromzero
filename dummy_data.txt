@@ -1,0 +1,4 @@
+{"text": "This is a test sentence for the model."}
+{"text": "Another test sentence to ensure it works."}
+{"text": "HuggingFace Trainer makes training easier."}
+{"text": "Accelerate handles distributed training."}
