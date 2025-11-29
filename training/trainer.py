@@ -51,7 +51,7 @@ def train_model(
 
     global_step = 0
     optimizer_step = 0
-
+    running_loss = 0.0
     for epoch in range(epochs):
         loop = tqdm(dataloader, desc=f"Epoch {epoch + 1}/{epochs}")
         for i, batch in enumerate(loop):
@@ -73,41 +73,51 @@ def train_model(
                     optimizer.zero_grad()
                     optimizer_step += 1
 
+            running_loss += loss.detach().float()
+
             global_step += 1
 
-            # Calculate epoch progress
-            if total_optimizer_steps > 0:
-                epoch_decimal = optimizer_step / total_optimizer_steps
-            else:
-                epoch_decimal = 0.0
-
-            current_lr = 0.0
-            if scheduler:
-                current_lr = scheduler.get_last_lr()[0]
-            elif hasattr(optimizer, "param_groups"):
-                current_lr = optimizer.param_groups[0]["lr"]
-
-            loop.set_postfix(loss=loss.item(), lr=current_lr, opt_step=optimizer_step)
-
-            # Log metrics every 10 steps
+            # Log metrics every 10 steps (或者你可以设大一点，比如 50)
             if global_step % 10 == 0:
-                metrics = {
-                    "train_loss": loss.item(),
-                    "epoch": epoch_decimal,
-                    "step": global_step,
-                    "optimizer_step": optimizer_step,
-                    "learning_rate": current_lr,
-                }
-                accelerator.log(metrics)
+                # 1. 计算本地平均 loss (过去 10 步)
+                local_avg_loss = running_loss / 10
 
-                log_metrics = {
-                    "epoch": f"{epoch_decimal:.4f}",
-                    "step": global_step,
-                    "opt_step": optimizer_step,
-                    "loss": f"{loss.item():.4f}",
-                    "lr": f"{current_lr:.6f}",
-                }
-                logger.log_metrics(log_metrics)
+                # 2. [关键] GATHER: 把所有设备的 local_avg_loss 收集起来
+                # input:  scalar tensor (比如 rank0是 6.1, rank1是 6.3)
+                # output: tensor([6.1, 6.3, ...]) 维度是 [num_processes]
+                all_losses = accelerator.gather(local_avg_loss)
+
+                # 3. 取全局平均
+                # 这一步会自动处理 TPU/GPU 的同步
+                global_avg_loss = all_losses.mean().item()
+
+                # 重置累积器
+                running_loss = 0.0
+
+                # 获取学习率
+                current_lr = 0.0
+                if scheduler:
+                    current_lr = scheduler.get_last_lr()[0]
+                elif hasattr(optimizer, "param_groups"):
+                    current_lr = optimizer.param_groups[0]["lr"]
+
+                # 4. 打印日志 (只在主进程打印)
+                if accelerator.is_main_process:
+                    loop.set_postfix(
+                        loss=global_avg_loss, lr=current_lr, step=optimizer_step
+                    )
+
+                    metrics = {
+                        "train_loss": global_avg_loss,
+                        "epoch": optimizer_step / total_optimizer_steps
+                        if total_optimizer_steps > 0
+                        else 0,
+                        "step": global_step,
+                        "optimizer_step": optimizer_step,
+                        "learning_rate": current_lr,
+                    }
+                    logger.log_metrics(metrics)
+                    accelerator.log(metrics)
 
     logger.info("Training finished.")
     return model
