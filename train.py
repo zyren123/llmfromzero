@@ -12,7 +12,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from models.dense import LuluModel, LuluConfig
 from models.moe import LuluMoeModel, LuluMoeConfig
 from models.vlm import LuluVLModel, LuluVLConfig
-from models.minimind import MiniMindModel, MiniMindConfig
+from models.minimind import MiniMindModel, MiniMindConfig, MiniMindForCausalLM
 from training.pretrain import train as train_pretrain
 from training.sft import train_sft
 from training.dpo import train_dpo
@@ -39,7 +39,7 @@ def get_model(model_type, vocab_size, model_path=None, **kwargs):
         elif model_type == "lulu_vl":
             model = LuluVLModel.from_pretrained(model_path)
         elif model_type == "minimind":
-            model = MiniMindModel.from_pretrained(model_path)
+            model = MiniMindForCausalLM.from_pretrained(model_path)
         else:
             raise ValueError(f"Unknown model type: {model_type}")
     else:
@@ -55,7 +55,7 @@ def get_model(model_type, vocab_size, model_path=None, **kwargs):
             model = LuluVLModel(config)
         elif model_type == "minimind":
             config = MiniMindConfig(vocab_size=vocab_size)
-            model = MiniMindModel(config)
+            model = MiniMindForCausalLM(config)
         else:
             raise ValueError(f"Unknown model type: {model_type}")
 
