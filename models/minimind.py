@@ -503,7 +503,6 @@ class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
             self.config.hidden_size, self.config.vocab_size, bias=False
         )
         self.model.embed_tokens.weight = self.lm_head.weight
-        self.OUT = CausalLMOutputWithPast()
 
     def forward(
         self,
@@ -512,6 +511,8 @@ class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
         past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
         use_cache: bool = False,
         logits_to_keep: Union[int, torch.Tensor] = 0,
+        labels: Optional[torch.Tensor] = None,
+        return_dict: bool = True,
         **args,
     ):
         h, past_kvs, aux_loss = self.model(
@@ -527,8 +528,33 @@ class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
             else logits_to_keep
         )
         logits = self.lm_head(h[:, slice_indices, :])
-        self.OUT.__setitem__("last_hidden_state", h)
-        self.OUT.__setitem__("logits", logits)
-        self.OUT.__setitem__("aux_loss", aux_loss)
-        self.OUT.__setitem__("past_key_values", past_kvs)
-        return self.OUT
+
+        loss = None
+        if labels is not None:
+            # Shift so that tokens < n predict n
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            # Flatten the tokens
+            loss = F.cross_entropy(
+                shift_logits.view(-1, self.config.vocab_size),
+                shift_labels.view(-1),
+                ignore_index=-100,
+            )
+            # Add aux_loss if present
+            if aux_loss is not None and aux_loss != 0:
+                loss = loss + aux_loss
+
+        if not return_dict:
+            output = (logits,)
+            if use_cache:
+                output += (past_kvs,)
+            if loss is not None:
+                output = (loss,) + output
+            return output
+
+        return CausalLMOutputWithPast(
+            loss=loss,
+            logits=logits,
+            past_key_values=past_kvs if use_cache else None,
+            hidden_states=h,
+        )
