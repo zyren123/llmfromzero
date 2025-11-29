@@ -19,7 +19,7 @@ class LuluConfig(PretrainedConfig):
         hidden_size=512,
         intermediate_size=2048,
         num_hidden_layers=8,
-        num_attention_heads=16,
+        num_attention_heads=8,
         num_key_value_heads=4,  # GQA
         hidden_act="silu",
         max_position_embeddings=32768,
@@ -153,13 +153,13 @@ class LuluAttention(nn.Module):
 
         # Standard QKV Projections
         self.q_proj = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=True
+            self.hidden_size, self.num_heads * self.head_dim, bias=False
         )
         self.k_proj = nn.Linear(
-            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True
+            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False
         )
         self.v_proj = nn.Linear(
-            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True
+            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False
         )
 
         # =================================================================

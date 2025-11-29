@@ -66,6 +66,7 @@ def train(
     lr=1e-4,
     gradient_accumulation_steps=1,
     accelerator=None,
+    warmup_ratio=0.0,
 ):
     dataset = TextDataset(train_file, tokenizer)
     dataloader = DataLoader(
@@ -81,8 +82,8 @@ def train(
     ) // gradient_accumulation_steps
     total_optimizer_steps = optimizer_steps_per_epoch * epochs
 
-    # Calculate warmup steps (10% of total optimizer steps)
-    warmup_steps = int(total_optimizer_steps * 0.1)
+    # Calculate warmup steps
+    warmup_steps = int(total_optimizer_steps * warmup_ratio)
 
     # Create scheduler with warmup
     scheduler = get_cosine_schedule_with_warmup(

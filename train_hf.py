@@ -1,29 +1,28 @@
 import argparse
-import torch
 import os
 import sys
-from transformers import PreTrainedTokenizerFast, AutoTokenizer
-from accelerate import Accelerator
-import wandb
-
-# Add current directory to path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
+import torch
+from transformers import (
+    AutoTokenizer,
+    Trainer,
+    TrainingArguments,
+    DataCollatorForLanguageModeling,
+)
+from training.pretrain import TextDataset
 from models.dense import LuluModel, LuluConfig
 from models.moe import LuluMoeModel, LuluMoeConfig
 from models.vlm import LuluVLModel, LuluVLConfig
 from models.minimind import MiniMindModel, MiniMindConfig, MiniMindForCausalLM
-from training.pretrain import train as train_pretrain
-from training.sft import train_sft
-from training.dpo import train_dpo
-from utils.logger import Logger
+
+# Add current directory to path to ensure local modules are found
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 
 def get_model(model_type, vocab_size, model_path=None, **kwargs):
     """Initialize or load a model.
 
     Args:
-        model_type: Type of model architecture (lulu, lulu_moe, lulu_vl)
+        model_type: Type of model architecture (lulu, lulu_moe, lulu_vl, minimind)
         vocab_size: Vocabulary size for new models
         model_path: Optional path to load pretrained model from
 
@@ -63,11 +62,11 @@ def get_model(model_type, vocab_size, model_path=None, **kwargs):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Unified Training Script")
+    parser = argparse.ArgumentParser(description="HuggingFace Trainer Script")
     parser.add_argument(
         "--mode",
         type=str,
-        required=True,
+        default="pretrain",
         choices=["pretrain", "sft", "dpo"],
         help="Training mode",
     )
@@ -90,11 +89,13 @@ def main():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="checkpoints",
+        default="checkpoints_hf",
         help="Directory to save checkpoints",
     )
     parser.add_argument("--epochs", type=int, default=1, help="Number of epochs")
-    parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
+    parser.add_argument(
+        "--batch_size", type=int, default=2, help="Batch size per device"
+    )
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument(
         "--gradient_accumulation_steps",
@@ -105,16 +106,15 @@ def main():
     parser.add_argument(
         "--wandb_project",
         type=str,
-        default="lulu-training",
+        default="lulu-training-hf",
         help="WandB project name",
     )
     parser.add_argument(
         "--model_path",
         type=str,
         default=None,
-        help="Path to pretrained model checkpoint (optional, will initialize from scratch if not provided)",
+        help="Path to pretrained model checkpoint",
     )
-
     parser.add_argument(
         "--use_gated_attention",
         type=str,
@@ -122,26 +122,15 @@ def main():
         choices=["True", "False"],
         help="Use gated attention",
     )
-
     parser.add_argument(
-        "--use_warmup",
-        action="store_true",
-        help="Use warmup (10% of total steps)",
+        "--block_size", type=int, default=512, help="Block size for tokenizer"
     )
+    parser.add_argument("--warmup_ratio", type=float, default=0.0, help="Warmup ratio")
+    parser.add_argument("--fp16", action="store_true", help="Use fp16 training")
+    parser.add_argument("--bf16", action="store_true", help="Use bf16 training")
 
     args = parser.parse_args()
     args.use_gated_attention = args.use_gated_attention == "True"
-    # Initialize Accelerator with gradient accumulation
-    accelerator = Accelerator(
-        log_with="wandb",
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-    )
-    accelerator.init_trackers(project_name=args.wandb_project, config=vars(args))
-
-    logger = Logger("train", is_main_process=accelerator.is_main_process)
-
-    logger.info(f"Starting training with args: {args}")
-    logger.info(f"Accelerator device: {accelerator.device}")
 
     # Load Tokenizer
     if not os.path.exists(args.tokenizer_path):
@@ -150,79 +139,75 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
     if tokenizer.pad_token is None:
         if tokenizer.eos_token is not None:
-            tokenizer.pad_token = "<|endoftext|>"
-    logger.info(
+            tokenizer.pad_token = tokenizer.eos_token
+        else:
+            tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+
+    print(
         f"Tokenizer loaded. Pad Token ID: {tokenizer.pad_token_id}, EOS Token ID: {tokenizer.eos_token_id}"
     )
-    logger.info(f"Vocab size: {len(tokenizer)}")
-    logger.info(
-        f"Loaded tokenizer from {args.tokenizer_path}, vocab size: {len(tokenizer)}"
-    )
 
-    # Initialize or Load Model
+    # Initialize Model
     model = get_model(
         args.model_type,
         len(tokenizer),
         args.model_path,
         use_gated_attention=args.use_gated_attention,
     )
-    if args.model_path:
-        logger.info(f"Loaded {args.model_type} model from {args.model_path}")
-    else:
-        logger.info(f"Initialized {args.model_type} model from scratch")
 
-    # Create output directory (only on main process)
-    if accelerator.is_main_process:
-        if not os.path.exists(args.output_dir):
-            os.makedirs(args.output_dir)
-    accelerator.wait_for_everyone()  # Wait for main process to create directory
+    print(f"Model {args.model_type} initialized.")
 
-    # Dispatch to training function
-    if args.mode == "pretrain":
-        trained_model = train_pretrain(
-            model=model,
-            tokenizer=tokenizer,
-            train_file=args.data_path,
-            epochs=args.epochs,
-            batch_size=args.batch_size,
-            lr=args.lr,
-            gradient_accumulation_steps=args.gradient_accumulation_steps,
-            accelerator=accelerator,
-            warmup_ratio=0.1 if args.use_warmup else 0.0,
-        )
-    elif args.mode == "sft":
-        trained_model = train_sft(
-            model=model,
-            tokenizer=tokenizer,
-            train_file=args.data_path,
-            epochs=args.epochs,
-            batch_size=args.batch_size,
-            lr=args.lr,
-            gradient_accumulation_steps=args.gradient_accumulation_steps,
-            accelerator=accelerator,
-        )
-    elif args.mode == "dpo":
-        trained_model = train_dpo(
-            model=model,
-            tokenizer=tokenizer,
-            train_file=args.data_path,
-            epochs=args.epochs,
-            batch_size=args.batch_size,
-            lr=args.lr,
-            accelerator=accelerator,
-        )
+    # Print trainable parameters
+    trainable_params = model.num_parameters(only_trainable=True)
+    all_params = model.num_parameters(only_trainable=False)
+    print(
+        f"trainable params: {trainable_params/1e6:.2f}M || all params: {all_params/1e6:.2f}M || trainable%: {100 * trainable_params / all_params:.2f}"
+    )
 
-    # Save Model (only on main process)
-    accelerator.wait_for_everyone()
-    if accelerator.is_main_process:
-        unwrapped_model = accelerator.unwrap_model(trained_model)
-        # Convert model to fp16 before saving to reduce model size
-        unwrapped_model = unwrapped_model.to(torch.float16)
-        unwrapped_model.save_pretrained(args.output_dir, safe_serialization=False)
-        tokenizer.save_pretrained(args.output_dir)
-        logger.info(f"Model and tokenizer saved to {args.output_dir} (fp16)")
+    # Prepare Dataset
+    dataset = TextDataset(args.data_path, tokenizer, block_size=args.block_size)
+    print(f"Dataset loaded with {len(dataset)} examples.")
 
-    accelerator.end_training()
+    # Data Collator
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+
+    # Training Arguments
+    training_args = TrainingArguments(
+        output_dir=args.output_dir,
+        overwrite_output_dir=True,
+        num_train_epochs=args.epochs,
+        per_device_train_batch_size=args.batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        learning_rate=args.lr,
+        weight_decay=0.01,
+        warmup_ratio=args.warmup_ratio,
+        logging_steps=10,
+        save_steps=500,
+        save_total_limit=2,
+        fp16=args.fp16,
+        bf16=args.bf16,
+        report_to="wandb" if args.wandb_project else "none",
+        run_name=f"{args.model_type}-pretrain",
+        remove_unused_columns=False,
+        save_safetensors=False,
+    )
+
+    # Initialize Trainer
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=dataset,
+        data_collator=data_collator,
+    )
+
+    # Train
+    print("Starting training...")
+    trainer.train()
+
+    # Save final model
+    print(f"Saving model to {args.output_dir}")
+    trainer.save_model(args.output_dir)
+    tokenizer.save_pretrained(args.output_dir)
 
 
 if __name__ == "__main__":
