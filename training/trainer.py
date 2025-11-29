@@ -52,6 +52,8 @@ def train_model(
     global_step = 0
     optimizer_step = 0
     running_loss = 0.0
+    running_gradnorm = 0.0
+    gradnorm_count = 0
     for epoch in range(epochs):
         loop = tqdm(dataloader, desc=f"Epoch {epoch + 1}/{epochs}")
         for i, batch in enumerate(loop):
@@ -67,6 +69,19 @@ def train_model(
 
                 # Only update optimizer when accumulation is complete
                 if accelerator.sync_gradients:
+                    # 计算梯度范数（在优化器更新之前）
+                    total_norm = 0.0
+                    param_count = 0
+                    for p in model.parameters():
+                        if p.grad is not None:
+                            param_norm = p.grad.data.norm(2)
+                            total_norm += param_norm.item() ** 2
+                            param_count += 1
+                    if param_count > 0:
+                        total_norm = total_norm ** (1.0 / 2)
+                        running_gradnorm += total_norm
+                        gradnorm_count += 1
+
                     optimizer.step()
                     if scheduler:
                         scheduler.step()
@@ -91,6 +106,18 @@ def train_model(
                 # 这一步会自动处理 TPU/GPU 的同步
                 global_avg_loss = all_losses.mean().item()
 
+                # 计算平均梯度范数
+                avg_gradnorm = 0.0
+                if gradnorm_count > 0:
+                    local_avg_gradnorm = running_gradnorm / gradnorm_count
+                    # 收集所有设备的梯度范数
+                    all_gradnorms = accelerator.gather(
+                        torch.tensor(local_avg_gradnorm, device=accelerator.device)
+                    )
+                    avg_gradnorm = all_gradnorms.mean().item()
+                    running_gradnorm = 0.0
+                    gradnorm_count = 0
+
                 # 重置累积器
                 running_loss = 0.0
 
@@ -104,11 +131,15 @@ def train_model(
                 # 4. 打印日志 (只在主进程打印)
                 if accelerator.is_main_process:
                     loop.set_postfix(
-                        loss=global_avg_loss, lr=current_lr, step=optimizer_step
+                        loss=global_avg_loss,
+                        gradnorm=avg_gradnorm,
+                        lr=current_lr,
+                        step=optimizer_step,
                     )
 
                     metrics = {
                         "train_loss": global_avg_loss,
+                        "gradnorm": avg_gradnorm,
                         "epoch": optimizer_step / total_optimizer_steps
                         if total_optimizer_steps > 0
                         else 0,
