@@ -30,14 +30,14 @@ class LuluConfig(PretrainedConfig):
         tie_word_embeddings=True,
         output_attentions=False,
         output_hidden_states=False,
-        # use_return_dict=True,
+        # 新增 Gate Attention 开关，默认为 True 以启用 Gate1
+        use_gated_attention=True,
         **kwargs,
     ):
         super().__init__(
             tie_word_embeddings=tie_word_embeddings,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
-            # use_return_dict=use_return_dict,
             **kwargs,
         )
         self.vocab_size = vocab_size
@@ -52,6 +52,7 @@ class LuluConfig(PretrainedConfig):
         self.rms_norm_eps = rms_norm_eps
         self.use_cache = use_cache
         self.rope_theta = rope_theta
+        self.use_gated_attention = use_gated_attention
 
 
 class RMSNorm(nn.Module):
@@ -91,7 +92,6 @@ class RotaryEmbedding(nn.Module):
         t = torch.arange(
             self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype
         )
-
         freqs = torch.outer(t, self.inv_freq)
         # Different from paper, but common in HF implementations (cat along last dim)
         emb = torch.cat((freqs, freqs), dim=-1)
@@ -102,7 +102,6 @@ class RotaryEmbedding(nn.Module):
         # x: [bs, num_attention_heads, seq_len, head_size]
         if seq_len > self.max_seq_len_cached:
             self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
         return (
             self.cos_cached[:seq_len].to(dtype=x.dtype),
             self.sin_cached[:seq_len].to(dtype=x.dtype),
@@ -150,7 +149,9 @@ class LuluAttention(nn.Module):
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.max_position_embeddings = config.max_position_embeddings
         self.rope_theta = config.rope_theta
+        self.use_gated_attention = config.use_gated_attention
 
+        # Standard QKV Projections
         self.q_proj = nn.Linear(
             self.hidden_size, self.num_heads * self.head_dim, bias=True
         )
@@ -160,6 +161,20 @@ class LuluAttention(nn.Module):
         self.v_proj = nn.Linear(
             self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True
         )
+
+        # =================================================================
+        # GATE 1 Implementation (Elementwise SDPA Gating)
+        # =================================================================
+        if self.use_gated_attention:
+            # 论文中 Gate1 是 Head-Specific 且 Elementwise 的。
+            # 输入是 hidden_states (dimension: hidden_size)
+            # 输出维度需要与 SDPA output (Concatenated heads) 一致，即 num_heads * head_dim
+            # 通常这等于 hidden_size。
+            # 注意：论文通常对 linear 层使用 bias，这里我们保持 bias=True
+            self.gate_proj = nn.Linear(
+                self.hidden_size, self.num_heads * self.head_dim, bias=True
+            )
+
         self.o_proj = nn.Linear(
             self.num_heads * self.head_dim, self.hidden_size, bias=False
         )
@@ -270,16 +285,31 @@ class LuluAttention(nn.Module):
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
         attn_output = torch.matmul(attn_weights, v_repeated)
 
+        # Reshape output back to [bsz, q_len, hidden_size]
         attn_output = (
             attn_output.transpose(1, 2)
             .contiguous()
-            .reshape(bsz, q_len, self.hidden_size)
+            .reshape(bsz, q_len, self.num_heads * self.head_dim)
         )
+
+        # =================================================================
+        # APPLY GATE 1 (SDPA Output Gating)
+        # =================================================================
+        if self.use_gated_attention:
+            # Paper Eq 5: Y' = Y * sigmoid(X * W_theta)
+            # Y is attn_output (SDPA output)
+            # X is hidden_states (Input to the layer)
+
+            gate_score = self.gate_proj(hidden_states)  # [bsz, q_len, hidden_size]
+            gate_score = torch.sigmoid(gate_score)
+
+            # Element-wise multiplication
+            attn_output = attn_output * gate_score
+
+        # Final output projection
         output = self.o_proj(attn_output)
 
-        # Return cache if use_cache is True
         if use_cache:
-            # Return k, v before GQA repetition (original num_key_value_heads)
             return output, (k, v)
         return output, None
 
@@ -369,9 +399,6 @@ class LuluModel(PreTrainedModel, GenerationMixin):
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
 
-    # ------------------------------------------------------------------
-    # ADDED METHODS FOR GENERATION COMPATIBILITY
-    # ------------------------------------------------------------------
     def get_input_embeddings(self):
         return self.embed_tokens
 
@@ -414,8 +441,6 @@ class LuluModel(PreTrainedModel, GenerationMixin):
         }
         return model_inputs
 
-    # ------------------------------------------------------------------
-
     def forward(
         self,
         input_ids=None,
@@ -430,7 +455,6 @@ class LuluModel(PreTrainedModel, GenerationMixin):
         labels=None,
         **kwargs,
     ):
-        # Set defaults from config
         output_attentions = (
             output_attentions
             if output_attentions is not None
@@ -506,10 +530,6 @@ class LuluModel(PreTrainedModel, GenerationMixin):
                 # [batch_size, 1, seq_len] -> [batch_size, 1, 1, seq_len]
                 attention_mask = attention_mask[:, None, :, :]
 
-            # FIXED: Replace 1s with 0s and 0s with -inf safely without using arithmetic that causes NaN
-            # Old error code: attention_mask = (1.0 - attention_mask) * float("-inf")
-
-            # Create a new mask initialized to 0s
             expanded_mask = torch.zeros_like(attention_mask, dtype=hidden_states.dtype)
             # Fill the positions where the original mask was 0 with -inf
             expanded_mask.masked_fill_(attention_mask == 0, float("-inf"))
@@ -547,7 +567,6 @@ class LuluModel(PreTrainedModel, GenerationMixin):
                 next_decoder_cache += (layer_outputs[1],)
 
             if output_attentions:
-                # Note: We don't return attentions from LuluAttention currently
                 all_self_attns += (None,)
 
         hidden_states = self.norm(hidden_states)

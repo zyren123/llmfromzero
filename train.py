@@ -18,7 +18,7 @@ from training.dpo import train_dpo
 from utils.logger import Logger
 
 
-def get_model(model_type, vocab_size, model_path=None):
+def get_model(model_type, vocab_size, model_path=None, **kwargs):
     """Initialize or load a model.
 
     Args:
@@ -42,13 +42,13 @@ def get_model(model_type, vocab_size, model_path=None):
     else:
         # Initialize from scratch
         if model_type == "lulu":
-            config = LuluConfig(vocab_size=vocab_size)
+            config = LuluConfig(vocab_size=vocab_size, **kwargs)
             model = LuluModel(config)
         elif model_type == "lulu_moe":
-            config = LuluMoeConfig(vocab_size=vocab_size)
+            config = LuluMoeConfig(vocab_size=vocab_size, **kwargs)
             model = LuluMoeModel(config)
         elif model_type == "lulu_vl":
-            config = LuluVLConfig(vocab_size=vocab_size)
+            config = LuluVLConfig(vocab_size=vocab_size, **kwargs)
             model = LuluVLModel(config)
         else:
             raise ValueError(f"Unknown model type: {model_type}")
@@ -109,6 +109,13 @@ def main():
         help="Path to pretrained model checkpoint (optional, will initialize from scratch if not provided)",
     )
 
+    parser.add_argument(
+        "--use_gated_attention",
+        type=bool,
+        default=True,
+        help="Use gated attention",
+    )
+
     args = parser.parse_args()
 
     # Initialize Accelerator with gradient accumulation
@@ -133,7 +140,12 @@ def main():
     )
 
     # Initialize or Load Model
-    model = get_model(args.model_type, len(tokenizer), args.model_path)
+    model = get_model(
+        args.model_type,
+        len(tokenizer),
+        args.model_path,
+        use_gated_attention=args.use_gated_attention,
+    )
     if args.model_path:
         logger.info(f"Loaded {args.model_type} model from {args.model_path}")
     else:
