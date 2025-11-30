@@ -52,8 +52,7 @@ def train_model(
     global_step = 0
     optimizer_step = 0
     running_loss = 0.0
-    running_gradnorm = 0.0
-    gradnorm_count = 0
+    current_gradnorm = 0.0  # 记录最近一次的梯度范数
     for epoch in range(epochs):
         loop = tqdm(dataloader, desc=f"Epoch {epoch + 1}/{epochs}")
         for i, batch in enumerate(loop):
@@ -79,8 +78,8 @@ def train_model(
                             param_count += 1
                     if param_count > 0:
                         total_norm = total_norm ** (1.0 / 2)
-                        running_gradnorm += total_norm
-                        gradnorm_count += 1
+                        # 记录当前步的梯度范数（不是累积）
+                        current_gradnorm = total_norm
 
                     optimizer.step()
                     if scheduler:
@@ -106,17 +105,15 @@ def train_model(
                 # 这一步会自动处理 TPU/GPU 的同步
                 global_avg_loss = all_losses.mean().item()
 
-                # 计算平均梯度范数
-                avg_gradnorm = 0.0
-                if gradnorm_count > 0:
-                    local_avg_gradnorm = running_gradnorm / gradnorm_count
-                    # 收集所有设备的梯度范数
+                # 收集梯度范数（记录最近一次的值）
+                gradnorm_to_log = current_gradnorm
+                if gradnorm_to_log > 0:
                     all_gradnorms = accelerator.gather(
-                        torch.tensor(local_avg_gradnorm, device=accelerator.device)
+                        torch.tensor(gradnorm_to_log, device=accelerator.device)
                     )
                     avg_gradnorm = all_gradnorms.mean().item()
-                    running_gradnorm = 0.0
-                    gradnorm_count = 0
+                else:
+                    avg_gradnorm = 0.0
 
                 # 重置累积器
                 running_loss = 0.0

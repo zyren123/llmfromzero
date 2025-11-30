@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import PreTrainedModel, PretrainedConfig
+from transformers import PreTrainedModel, PretrainedConfig, GenerationMixin
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
 class LuluConfig(PretrainedConfig):
@@ -167,7 +167,7 @@ class LuluBlock(nn.Module):
         x = x + self.mlp(self.post_attention_layernorm(x))
         return x, cache
 
-class LuluModel(PreTrainedModel):
+class LuluModel(PreTrainedModel, GenerationMixin):
     config_class = LuluConfig
     _no_split_modules = ["LuluBlock"]
 
