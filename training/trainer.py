@@ -11,6 +11,7 @@ def train_model(
     gradient_accumulation_steps,
     scheduler=None,
     logger_name="trainer",
+    **kwargs,
 ):
     """
     Unified training loop for Pretraining and SFT.
@@ -62,22 +63,27 @@ def train_model(
 
             with accelerator.accumulate(model):
                 outputs = model(input_ids=input_ids, labels=labels)
-                loss = outputs["loss"]
+               # 1. 保留原始 Loss 用于日志 (raw_loss)
+                raw_loss = outputs["loss"].detach()
                 
+                # 2. 计算用于反向传播的 Scaled Loss
+                loss = outputs["loss"] / gradient_accumulation_steps
                 accelerator.backward(loss)
 
                 if accelerator.sync_gradients:
                     # 计算梯度范数 (仅在更新参数时计算)
-                    total_norm = 0.0
-                    param_count = 0
-                    for p in model.parameters():
-                        if p.grad is not None:
-                            param_norm = p.grad.data.norm(2)
-                            total_norm += param_norm.item() ** 2
-                            param_count += 1
-                    if param_count > 0:
-                        current_gradnorm = total_norm ** (1.0 / 2)
-
+                    # total_norm = 0.0
+                    # param_count = 0
+                    # for p in model.parameters():
+                    #     if p.grad is not None:
+                    #         param_norm = p.grad.data.norm(2)
+                    #         total_norm += param_norm.item() ** 2
+                    #         param_count += 1
+                    # if param_count > 0:
+                    #     current_gradnorm = total_norm ** (1.0 / 2)
+                    current_gradnorm = accelerator.clip_grad_norm_(model.parameters(), 1.0)
+                    if current_gradnorm is not None:
+                        current_gradnorm = current_gradnorm.item()
                     optimizer.step()
                     if scheduler:
                         scheduler.step()
@@ -88,7 +94,7 @@ def train_model(
             # 直接累加当前卡的 loss.item()。
             # accelerate 的 loss 通常已经是 Mean Reduction (例如 8.0)
             # 我们不需要在这里除以 accumulation_steps，因为我们最后是求一段时间内的平均值
-            running_loss += loss.item()
+            running_loss += raw_loss.item()
             
             global_step += 1
 
@@ -103,7 +109,7 @@ def train_model(
                     # 计算过去 log_interval 步的平均 Loss
                     # 例如：(8.0 + 8.1 + ... + 7.9) / 10 = 8.0
                     avg_loss = running_loss / log_interval
-                    
+                    display_gradnorm = current_gradnorm * gradient_accumulation_steps if gradient_accumulation_steps > 1 else current_gradnorm
                     # 获取当前学习率
                     current_lr = 0.0
                     if scheduler:
@@ -114,7 +120,7 @@ def train_model(
                     # 更新进度条
                     loop.set_postfix(
                         loss=avg_loss,
-                        gradnorm=current_gradnorm,
+                        gradnorm=display_gradnorm,
                         lr=current_lr,
                         step=optimizer_step,
                     )
@@ -122,13 +128,13 @@ def train_model(
                     # 记录日志
                     metrics = {
                         "train_loss": avg_loss,
-                        "gradnorm": current_gradnorm,
+                        "gradnorm": display_gradnorm,
                         "epoch": optimizer_step / total_optimizer_steps if total_optimizer_steps > 0 else 0,
                         "step": global_step,
                         "optimizer_step": optimizer_step,
                         "learning_rate": current_lr,
                     }
-                    logger.log_metrics(metrics)
+                    # logger.log_metrics(metrics)
                     accelerator.log(metrics)
 
                 # 重置累积器 (所有进程都要重置，保持逻辑一致)
